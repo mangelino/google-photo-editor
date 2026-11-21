@@ -1,6 +1,7 @@
 // ==UserScript==
 // @name         Light Table for Google Photos
 // @namespace    https://github.com/mangelino/google-photo-editor
+// @author       Massimiliano Angelino
 // @license      MIT-0
 // @version      {{version}}
 // @description  {{description}}
@@ -21,6 +22,8 @@
 // ==/UserScript==
 
 /*
+ * Light Table for Google Photos, by Massimiliano Angelino. Made with Kiro (https://kiro.dev).
+ *
  * GENERATED FILE: edit src/ and run `npm run build`.
  *
  * @namespace keeps the project's original URL on purpose: Tampermonkey matches a

@@ -1,3 +1,4 @@
+// Light Table for Google Photos, by Massimiliano Angelino. Made with Kiro (https://kiro.dev).
 // GENERATED FILE: edit src/ and run `npm run build`.
 (() => {
   'use strict';

@@ -33,7 +33,7 @@ writeFileSync(join(root, 'google-photos-range-tools.user.js'), userscript); // l
 const ext = join(root, 'extension');
 rmSync(ext, { recursive: true, force: true });
 mkdirSync(ext);
-const generated = '// GENERATED FILE: edit src/ and run `npm run build`.\n';
+const generated = '// Light Table for Google Photos, by Massimiliano Angelino. Made with Kiro (https://kiro.dev).\n// GENERATED FILE: edit src/ and run `npm run build`.\n';
 writeFileSync(join(ext, 'content.js'), generated + iife(read('src/platform.extension.js'), core));
 writeFileSync(join(ext, 'background.js'), generated + read('src/extension.background.js'));
 writeFileSync(join(ext, 'styles.css'), css);

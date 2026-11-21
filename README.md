@@ -105,3 +105,7 @@ Dates are matched against each photo's own local time, the same date Google Phot
 ## License
 
 [MIT-0](LICENSE). The RPC ids and payload layouts were worked out by [Google Photos Toolkit](https://github.com/xob0t/Google-Photos-Toolkit) (MIT).
+
+---
+
+By Massimiliano Angelino. Made with [Kiro](https://kiro.dev).

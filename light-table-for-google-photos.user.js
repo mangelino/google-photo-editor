@@ -1,8 +1,9 @@
 // ==UserScript==
 // @name         Light Table for Google Photos
 // @namespace    https://github.com/mangelino/google-photo-editor
+// @author       Massimiliano Angelino
 // @license      MIT-0
-// @version      0.5.1
+// @version      0.5.2
 // @description  Pick Google Photos by date or album, filter by type, group bursts, manage albums, trash, zoom and download originals.
 // @homepageURL  https://github.com/mangelino/light-table-for-google-photos
 // @supportURL   https://github.com/mangelino/light-table-for-google-photos/issues
@@ -21,6 +22,8 @@
 // ==/UserScript==
 
 /*
+ * Light Table for Google Photos, by Massimiliano Angelino. Made with Kiro (https://kiro.dev).
+ *
  * GENERATED FILE: edit src/ and run `npm run build`.
  *
  * @namespace keeps the project's original URL on purpose: Tampermonkey matches a
