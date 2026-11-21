@@ -30,12 +30,14 @@ Tampermonkey checks for a new version every 24 hours by default. To check right 
 
 ### Option B: Chrome extension (unpacked)
 
-1. Download or clone this repository.
-2. Open `chrome://extensions`, turn on **Developer mode** (top right), click **Load unpacked**, and pick the
-   `extension/` folder.
+1. Download `range-tools-extension-<version>.zip` from the [latest release](https://github.com/mangelino/google-photo-editor/releases/latest)
+   and unzip it into a folder you'll keep (Chrome loads the extension from there).
+2. Open `chrome://extensions` (or `edge://extensions`), turn on **Developer mode** (top right), click
+   **Load unpacked**, and pick the unzipped folder. (From a clone of this repo, pick `extension/`.)
 3. Open <https://photos.google.com> and click **Range Tools** in the bottom-left corner or the extension's toolbar icon.
 
-Unpacked extensions don't update themselves: after `git pull`, click the reload icon on the extension's card.
+Unpacked extensions don't update themselves: download the new zip, replace the folder's contents, and click the
+reload icon on the extension's card.
 The extension asks only for the `downloads` permission and runs only on photos.google.com.
 
 ## Development
@@ -58,7 +60,8 @@ install methods work straight from GitHub.
 
 To release: bump `version` in `package.json` (it feeds the userscript `@version` and the manifest), run
 `npm run build`, commit, push. Installed userscripts only update when the version goes up.
-`npm run package` also writes a `.zip` for the Chrome Web Store.
+`npm run package` also writes the extension `.zip`; attach it to a GitHub release
+(`gh release create v<version> range-tools-extension-<version>.zip google-photos-range-tools.user.js`).
 
 ## Use
 
