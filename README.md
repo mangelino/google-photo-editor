@@ -50,3 +50,7 @@ Dates are matched against each photo's own local time, the same date Google Phot
   service. It is meant for occasional personal use on your own account.
 - Videos are shown as thumbnails in the viewer; download them to play.
 - Bulk downloads run three at a time. The browser may ask once to allow multiple downloads.
+
+## License
+
+[MIT-0](LICENSE). The RPC ids and payload layouts were worked out by [Google Photos Toolkit](https://github.com/xob0t/Google-Photos-Toolkit) (MIT).
