@@ -14,12 +14,20 @@ A Tampermonkey userscript that adds a full-screen tool to photos.google.com:
 ## Install
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/).
-2. Open the Tampermonkey dashboard → **+** (new script), replace the template with the contents of
-   `google-photos-range-tools.user.js`, and save.
+2. Open [the raw script](https://raw.githubusercontent.com/mangelino/google-photo-editor/main/google-photos-range-tools.user.js) and click **Install** in the Tampermonkey page that appears.
+   If you installed by pasting the code earlier, delete that copy first so you don't run two.
 3. Open <https://photos.google.com>. Click **Range Tools** in the bottom-left corner
    (or use the Tampermonkey menu → *Open Range Tools*).
 
 On Chrome, Tampermonkey needs "Allow User Scripts" enabled in the extension's details page.
+
+### Updates
+
+Tampermonkey checks `@updateURL` (the file on `main`) periodically, every 24 hours by default, and installs a new
+version when the `@version` number is higher. To check right away: Tampermonkey dashboard → *Utilities* →
+*Check for userscript updates*, or the script's *Check for updates* menu entry.
+
+When changing the script, bump `@version` in the header or installed copies won't update.
 
 ## Use
 

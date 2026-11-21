@@ -2,8 +2,12 @@
 // @name         Google Photos Range Tools
 // @namespace    https://github.com/mangelino/google-photo-editor
 // @license      MIT-0
-// @version      0.1.0
-// @description  Select Google Photos by date range, add them to albums, browse at different sizes and zoom levels, and download originals.
+// @version      0.3.0
+// @description  Select Google Photos by date range or album, filter by type, add to or remove from albums, trash, zoom, and download originals.
+// @homepageURL  https://github.com/mangelino/google-photo-editor
+// @supportURL   https://github.com/mangelino/google-photo-editor/issues
+// @updateURL    https://raw.githubusercontent.com/mangelino/google-photo-editor/main/google-photos-range-tools.user.js
+// @downloadURL  https://raw.githubusercontent.com/mangelino/google-photo-editor/main/google-photos-range-tools.user.js
 // @match        https://photos.google.com/*
 // @run-at       document-idle
 // @noframes
