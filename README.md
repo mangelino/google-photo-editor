@@ -6,6 +6,7 @@ A Tampermonkey userscript that adds a full-screen tool to photos.google.com:
 - Filter what you loaded by type (photos or videos) and by file extension (JPG, HEIC, PNG, MP4, …)
 - Select them one by one, by shift-click range, by day, or all at once
 - Add the selection to an existing album (own or shared) or to a new one
+- Open an album to browse its contents, then remove selected items from it or move them to the trash
 - Browse the grid at any tile size (64–600 px), square-cropped or original aspect ratio
 - Open a viewer with zoom (wheel, buttons, keys) and pan; it loads higher resolutions as you zoom in
 - Download originals of the selection, using the original filenames
@@ -35,6 +36,10 @@ On Chrome, Tampermonkey needs "Allow User Scripts" enabled in the extension's de
 | Viewer | Previous / next | `←` / `→` |
 | Viewer | Toggle selection | `Space` or `x` |
 | Any    | Close | `Esc` |
+
+**Remove from album** (shown only when an album is open) takes the items out of that album; they stay in your library.
+**Move to trash** deletes the items from your library and from every album they are in. You can restore them from
+Google Photos' Trash for 60 days. Both actions ask for confirmation first.
 
 The zoom percentage in the viewer is relative to the original's pixels. 100% means one image pixel per screen pixel.
 

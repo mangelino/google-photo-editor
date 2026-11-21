@@ -190,6 +190,48 @@
     }
   }
 
+  // Album contents. Item mediaKeys returned here are album-scoped: they are what
+  // the remove-from-album RPCs expect.
+  async function loadAlbum(album, signal, onProgress) {
+    const items = new Map();
+    let pageId = null;
+    do {
+      if (signal.aborted) throw new Error('Cancelled');
+      const r = await rpc('snAcKc', [album.mediaKey, pageId, null, null]);
+      for (const d of r?.[1] || []) {
+        const it = parseItem(d);
+        items.set(it.mediaKey, it);
+      }
+      const next = r?.[2] || null;
+      pageId = next && next !== pageId ? next : null;
+      onProgress(items.size);
+    } while (pageId);
+    return [...items.values()].sort((a, b) => b.timestamp - a.timestamp);
+  }
+
+  async function removeFromAlbum(items, album, onProgress) {
+    const CHUNK = 250;
+    for (let i = 0; i < items.length; i += CHUNK) {
+      const keys = items.slice(i, i + CHUNK).map((it) => it.mediaKey);
+      if (album.shared) {
+        await rpc('LjmOue', [[album.mediaKey], [keys], [[null, null, null, [null, [], []], null, null, null, null, null, null, null, null, null, []]]]);
+      } else {
+        await rpc('ycV3Nd', [keys]);
+      }
+      onProgress(Math.min(i + CHUNK, items.length), items.length);
+    }
+  }
+
+  // Moves items to Google Photos' trash (restorable there for 60 days).
+  async function moveToTrash(items, onProgress) {
+    const CHUNK = 250;
+    for (let i = 0; i < items.length; i += CHUNK) {
+      const keys = items.slice(i, i + CHUNK).map((it) => it.dedupKey).filter(Boolean);
+      if (keys.length) await rpc('XwAOJf', [null, 1, keys, 3]);
+      onProgress(Math.min(i + CHUNK, items.length), items.length);
+    }
+  }
+
   async function createAlbum(name) {
     const r = await rpc('OXvT9d', [name, null, 2]);
     const key = r?.[0]?.[0];
@@ -420,6 +462,7 @@
   };
 
   let root, grid, statusEl, selCountEl, btnAlbum, btnDownload, btnCancel, btnLoad, inFrom, inTo, inSource, filterBar, extChips;
+  let btnOpenAlbum, btnRemove, btnTrash;
 
   const UNKNOWN_EXT = '(unknown)';
   function extOf(it) {
@@ -438,7 +481,7 @@
     for (const k of [...S.selected]) if (!visible.has(k)) S.selected.delete(k);
     S.lastClicked = null;
     renderGrid();
-    if (S.all.length) setStatus(`Showing ${S.items.length} of ${S.all.length} items between ${inFrom.value} and ${inTo.value}.`);
+    if (S.all.length) setStatus(`Showing ${S.items.length} of ${S.all.length} items ${S.source?.label || ''}.`);
   }
 
   function buildExtChips() {
@@ -488,6 +531,9 @@
       h('option', { value: '2' }, 'Archive only'));
     btnLoad = h('button', { class: 'gprt-primary', onclick: onLoad }, 'Load');
     btnCancel = h('button', { style: { display: 'none' }, onclick: () => S.task?.abort() }, 'Cancel');
+    btnOpenAlbum = h('button', { onclick: onOpenAlbum, title: 'Load the contents of an album instead of a date range' }, 'Open album…');
+    btnRemove = h('button', { onclick: removeSelectedFromAlbum, style: { display: 'none' } }, 'Remove from album');
+    btnTrash = h('button', { onclick: trashSelected, style: { color: '#ff8a80' } }, 'Move to trash');
 
     const sizeLabel = h('span', { class: 'gprt-zoom' }, `${S.size}px`);
     const sizeSlider = h('input', {
@@ -523,13 +569,13 @@
 
     root = h('div', { class: `gprt-root${S.crop ? '' : ' gprt-fit'}` },
       h('div', { class: 'gprt-bar' },
-        h('div', { class: 'gprt-group' }, 'From', inFrom, 'to', inTo, inSource, btnLoad, btnCancel),
+        h('div', { class: 'gprt-group' }, 'From', inFrom, 'to', inTo, inSource, btnLoad, 'or', btnOpenAlbum, btnCancel),
         h('div', { class: 'gprt-group' }, 'Size', sizeSlider, sizeLabel,
           h('label', { class: 'gprt-group' }, cropBox, 'Square')),
         h('div', { class: 'gprt-group' },
           h('button', { onclick: () => selectAll(true) }, 'Select all'),
           h('button', { onclick: () => selectAll(false) }, 'Clear'),
-          selCountEl, btnAlbum, btnDownload),
+          selCountEl, btnAlbum, btnDownload, btnRemove, btnTrash),
         h('div', { class: 'gprt-spacer' }),
         h('button', { onclick: closeApp, title: 'Close (Esc)' }, '✕')),
       filterBar,
@@ -561,14 +607,27 @@
     const to = Date.UTC(ty, tm - 1, td, 23, 59, 59, 999);
     if (from > to) return setStatus('"From" is after "to".', true);
 
+    await loadInto({ type: 'range', label: `between ${inFrom.value} and ${inTo.value}` }, (signal) =>
+      loadRange(from, to, +inSource.value, signal, (count, pages, last) => {
+        const at = last ? ` (scanning ${fmtDay(dayKey(last))})` : '';
+        setStatus(`Loading… ${count} items found, ${pages} pages read${at}`);
+      }));
+  }
+
+  async function onOpenAlbum() {
+    const album = await pickAlbum('Open album');
+    if (!album) return;
+    await loadInto({ type: 'album', album, label: `in album "${album.title}"` }, (signal) =>
+      loadAlbum(album, signal, (count) => setStatus(`Loading "${album.title}"… ${count} items`)));
+  }
+
+  async function loadInto(source, fetchItems) {
     const ctrl = new AbortController();
     setBusy(ctrl);
     setStatus('Loading…');
     try {
-      const items = await loadRange(from, to, +inSource.value, ctrl.signal, (count, pages, last) => {
-        const at = last ? ` (scanning ${fmtDay(dayKey(last))})` : '';
-        setStatus(`Loading… ${count} items found, ${pages} pages read${at}`);
-      });
+      const items = await fetchItems(ctrl.signal);
+      S.source = source;
       S.all = items;
       S.selected.clear();
       let infoError = null;
@@ -601,7 +660,7 @@
   function renderGrid() {
     grid.replaceChildren();
     if (!S.items.length) {
-      grid.append(h('div', { class: 'gprt-empty' }, S.all.length ? 'No items match the type/extension filter.' : 'No photos in this range.'));
+      grid.append(h('div', { class: 'gprt-empty' }, S.all.length ? 'No items match the type/extension filter.' : S.source?.type === 'album' ? 'This album is empty.' : 'No photos in this range.'));
       return;
     }
     const bucket = thumbBucket();
@@ -685,6 +744,10 @@
     selCountEl.textContent = `${n} selected`;
     btnAlbum.disabled = n === 0 || !!S.task;
     btnDownload.disabled = n === 0 || !!S.task;
+    btnTrash.disabled = n === 0 || !!S.task;
+    btnRemove.disabled = n === 0 || !!S.task;
+    btnRemove.style.display = S.source?.type === 'album' ? '' : 'none';
+    btnOpenAlbum.disabled = !!S.task;
     root.classList.toggle('gprt-has-sel', n > 0);
   }
 
@@ -778,6 +841,93 @@
 
     sync();
     fetchAlbums();
+  }
+
+  // Modal list of albums; resolves with the chosen album or null.
+  function pickAlbum(title) {
+    return new Promise((resolve) => {
+      const list = h('div', { class: 'gprt-albums' }, h('div', { class: 'gprt-empty' }, 'Loading albums…'));
+      const filter = h('input', { type: 'text', placeholder: 'Filter albums', oninput: () => render() });
+      const close = (album) => { bg.remove(); resolve(album); };
+      const bg = h('div', { class: 'gprt-modal-bg', onclick: (e) => { if (e.target === bg) close(null); } },
+        h('div', { class: 'gprt-modal' },
+          h('h3', {}, title), filter, list,
+          h('div', { class: 'gprt-row', style: { justifyContent: 'flex-end' } },
+            h('button', { onclick: () => { S.albums = null; load(); } }, 'Refresh'),
+            h('button', { onclick: () => close(null) }, 'Cancel'))));
+      bg.addEventListener('gprt-dismiss', () => resolve(null)); // Esc
+      root.append(bg);
+      filter.focus();
+
+      function render() {
+        const q = filter.value.trim().toLowerCase();
+        const rows = (S.albums || [])
+          .filter((a) => !q || a.title.toLowerCase().includes(q))
+          .map((a) => h('div', { class: 'gprt-album', onclick: () => close(a) },
+            a.title, h('small', {}, `${a.count}${a.shared ? ' · shared' : ''}`)));
+        list.replaceChildren(...(rows.length ? rows : [h('div', { class: 'gprt-empty' }, 'No albums match.')]));
+      }
+
+      async function load() {
+        list.replaceChildren(h('div', { class: 'gprt-empty' }, 'Loading albums…'));
+        try {
+          S.albums = S.albums || (await listAlbums());
+          S.albums.sort((a, b) => a.title.localeCompare(b.title));
+          render();
+        } catch (e) {
+          list.replaceChildren(h('div', { class: 'gprt-empty' }, e.message));
+        }
+      }
+      load();
+    });
+  }
+
+  // ---- Remove from album / trash ----
+
+  const selectedItems = () => S.items.filter((it) => S.selected.has(it.mediaKey));
+
+  function dropFromView(items) {
+    const gone = new Set(items.map((it) => it.mediaKey));
+    S.all = S.all.filter((it) => !gone.has(it.mediaKey));
+    for (const k of gone) S.selected.delete(k);
+    buildExtChips();
+    applyFilters();
+  }
+
+  async function runAction(items, verb, action) {
+    const ctrl = new AbortController();
+    setBusy(ctrl);
+    try {
+      await action((done, total) => setStatus(`${verb}… ${done}/${total}`));
+      dropFromView(items);
+      S.albums = null; // album counts changed
+      return true;
+    } catch (e) {
+      setStatus(`${verb} failed: ${e.message}. Reload the album to see its current state.`, true);
+      return false;
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function removeSelectedFromAlbum() {
+    const album = S.source?.album;
+    const items = selectedItems();
+    if (!album || !items.length) return;
+    if (!confirm(`Remove ${items.length} item${items.length === 1 ? '' : 's'} from "${album.title}"?\n\nThe photos stay in your library.`)) return;
+    if (await runAction(items, 'Removing from album', (p) => removeFromAlbum(items, album, p))) {
+      setStatus(`Removed ${items.length} items from "${album.title}". ${S.all.length} left.`);
+    }
+  }
+
+  async function trashSelected() {
+    const items = selectedItems();
+    if (!items.length) return;
+    const where = S.source?.type === 'album' ? ' It also removes them from every album, not just this one.' : '';
+    if (!confirm(`Move ${items.length} item${items.length === 1 ? '' : 's'} to the Google Photos trash?\n\nThis deletes them from your library on all devices.${where} You can restore them from Trash for 60 days.`)) return;
+    if (await runAction(items, 'Moving to trash', (p) => moveToTrash(items, p))) {
+      setStatus(`Moved ${items.length} items to trash.`);
+    }
   }
 
   // ---- Downloads ----
@@ -1008,7 +1158,10 @@
     if (e.key === 'Escape') {
       e.preventDefault();
       const modal = root.querySelector('.gprt-modal-bg');
-      if (modal) modal.remove();
+      if (modal) {
+        modal.dispatchEvent(new CustomEvent('gprt-dismiss'));
+        modal.remove();
+      }
       else if (S.viewer) closeViewer();
       else closeApp();
       return;
