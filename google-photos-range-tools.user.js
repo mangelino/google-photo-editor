@@ -2,7 +2,7 @@
 // @name         Google Photos Range Tools
 // @namespace    https://github.com/mangelino/google-photo-editor
 // @license      MIT-0
-// @version      0.3.0
+// @version      0.4.0
 // @description  Select Google Photos by date range or album, filter by type, add to or remove from albums, trash, zoom, and download originals.
 // @homepageURL  https://github.com/mangelino/google-photo-editor
 // @supportURL   https://github.com/mangelino/google-photo-editor/issues
@@ -413,6 +413,10 @@
     .gprt-dayhead { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; color: #ccc; font-weight: 500; }
     .gprt-dayhead button { padding: 2px 8px; font-size: 12px; }
     .gprt-tiles { display: flex; flex-wrap: wrap; gap: 4px; }
+    .gprt-shotgroup { display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 1px solid #3d5a80;
+      border-radius: 6px; background: #18202b; max-width: 100%; }
+    .gprt-shotgroup-head { display: flex; align-items: center; gap: 8px; padding: 0 2px; font-size: 12px; color: #9fb7d6; }
+    .gprt-shotgroup-head button { padding: 1px 8px; font-size: 12px; }
     .gprt-tile { position: relative; width: var(--sz); height: var(--sz); background: #222; overflow: hidden; cursor: zoom-in; border-radius: 2px; }
     .gprt-fit .gprt-tile { width: calc(var(--sz) * var(--ar)); }
     .gprt-tile img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .12s; }
@@ -455,6 +459,9 @@
     all: [], // everything loaded for the date range
     items: [], // after type/extension filters; this is what the grid shows
     filterType: 'all', // 'all' | 'photo' | 'video'
+    grouping: false, // group shots taken close together
+    groupGapSec: 3, // max seconds between consecutive shots in one group
+    onlyGroups: false, // hide shots that are not part of a group
     hiddenExts: new Set(), // extensions unticked in the filter bar
     selected: new Set(), // mediaKeys
     lastClicked: null, // index for shift-click ranges
@@ -466,12 +473,24 @@
   };
 
   let root, grid, statusEl, selCountEl, btnAlbum, btnDownload, btnCancel, btnLoad, inFrom, inTo, inSource, filterBar, extChips;
-  let btnOpenAlbum, btnRemove, btnTrash;
+  let btnOpenAlbum, btnRemove, btnTrash, groupCountEl;
 
   const UNKNOWN_EXT = '(unknown)';
   function extOf(it) {
     const m = /\.([a-z0-9]+)$/i.exec(it.fileName || '');
     return m ? m[1].toLowerCase() : UNKNOWN_EXT;
+  }
+
+  // Splits items (newest first) into runs where each shot is at most gapMs from the previous one.
+  function groupShots(items, gapMs) {
+    const groups = [];
+    let cur = null;
+    for (const it of items) {
+      const prev = cur?.[cur.length - 1];
+      if (prev && prev.timestamp - it.timestamp <= gapMs && dayKey(prev) === dayKey(it)) cur.push(it);
+      else groups.push((cur = [it]));
+    }
+    return groups;
   }
 
   function applyFilters() {
@@ -480,6 +499,9 @@
       if (S.filterType === 'video' && !it.isVideo) return false;
       return !S.hiddenExts.has(extOf(it));
     });
+    if (S.grouping && S.onlyGroups) {
+      S.items = groupShots(S.items, S.groupGapSec * 1000).filter((g) => g.length > 1).flat();
+    }
     // Keep only selections that are still visible, so album/download actions match what you see.
     const visible = new Set(S.items.map((it) => it.mediaKey));
     for (const k of [...S.selected]) if (!visible.has(k)) S.selected.delete(k);
@@ -552,12 +574,34 @@
 
     statusEl = h('div', { class: 'gprt-status' }, 'Pick a date range and press Load.');
     extChips = h('div', { class: 'gprt-group', style: { flexWrap: 'wrap' } });
+    groupCountEl = h('small', { style: { color: '#999' } });
+    const gapInput = h('input', {
+      type: 'number', min: '1', max: '3600', step: '1', value: String(S.groupGapSec),
+      style: { width: '64px' }, title: 'Shots taken at most this many seconds apart are grouped',
+      onchange: (e) => {
+        const v = Math.round(+e.target.value);
+        S.groupGapSec = Number.isFinite(v) ? Math.max(1, Math.min(3600, v)) : 3;
+        e.target.value = String(S.groupGapSec);
+        applyFilters();
+      },
+    });
+    const groupOpts = h('span', { class: 'gprt-group', style: { display: 'none' } },
+      'within', gapInput, 's',
+      h('label', { class: 'gprt-group' },
+        h('input', { type: 'checkbox', onchange: (e) => { S.onlyGroups = e.target.checked; applyFilters(); } }),
+        'Only groups'),
+      groupCountEl);
     filterBar = h('div', { class: 'gprt-bar', style: { display: 'none', paddingTop: '6px', paddingBottom: '6px' } },
       h('div', { class: 'gprt-group' }, 'Type',
         h('select', { onchange: (e) => { S.filterType = e.target.value; applyFilters(); } },
           h('option', { value: 'all' }, 'Photos + videos'),
           h('option', { value: 'photo' }, 'Photos only'),
           h('option', { value: 'video' }, 'Videos only'))),
+      h('div', { class: 'gprt-group' },
+        h('label', { class: 'gprt-group' },
+          h('input', { type: 'checkbox', onchange: (e) => { S.grouping = e.target.checked; groupOpts.style.display = S.grouping ? '' : 'none'; applyFilters(); } }),
+          'Group shots'),
+        groupOpts),
       h('div', { class: 'gprt-group' }, 'Extensions', extChips,
         h('button', { onclick: () => setAllExts(true) }, 'All'),
         h('button', { onclick: () => setAllExts(false) }, 'None')));
@@ -664,10 +708,11 @@
   function renderGrid() {
     grid.replaceChildren();
     if (!S.items.length) {
-      grid.append(h('div', { class: 'gprt-empty' }, S.all.length ? 'No items match the type/extension filter.' : S.source?.type === 'album' ? 'This album is empty.' : 'No photos in this range.'));
+      grid.append(h('div', { class: 'gprt-empty' }, S.all.length ? 'No items match the current filters.' : S.source?.type === 'album' ? 'This album is empty.' : 'No photos in this range.'));
       return;
     }
     const bucket = thumbBucket();
+    const idxOf = new Map(S.items.map((it, i) => [it.mediaKey, i]));
     const days = new Map(); // dayKey -> [{ it, idx }], in display order
     S.items.forEach((it, idx) => {
       const key = dayKey(it);
@@ -679,9 +724,30 @@
       grid.append(h('div', { class: 'gprt-day' },
         h('div', { class: 'gprt-dayhead' }, fmtDay(key), h('small', {}, `${entries.length}`),
           h('button', { onclick: () => toggleGroup(dayItems) }, 'Select day')),
-        h('div', { class: 'gprt-tiles' }, entries.map(({ it, idx }) => makeTile(it, idx, bucket)))));
+        h('div', { class: 'gprt-tiles' }, S.grouping
+          ? groupShots(dayItems, S.groupGapSec * 1000).map((g) => (g.length > 1
+            ? makeShotGroup(g, idxOf, bucket)
+            : makeTile(g[0], idxOf.get(g[0].mediaKey), bucket)))
+          : entries.map(({ it, idx }) => makeTile(it, idx, bucket)))));
+    }
+    if (S.grouping) {
+      const n = groupShots(S.items, S.groupGapSec * 1000).filter((g) => g.length > 1).length;
+      groupCountEl.textContent = `${n} group${n === 1 ? '' : 's'}`;
+    } else {
+      groupCountEl.textContent = '';
     }
     updateSelectionUi();
+  }
+
+  function makeShotGroup(group, idxOf, bucket) {
+    const span = (group[0].timestamp - group[group.length - 1].timestamp) / 1000;
+    const spanText = span < 60 ? `${span.toFixed(span < 10 ? 1 : 0)}s` : `${Math.round(span / 60)} min`;
+    const time = localDate(group[group.length - 1]).toLocaleTimeString(undefined, { timeStyle: 'medium', timeZone: 'UTC' });
+    return h('div', { class: 'gprt-shotgroup' },
+      h('div', { class: 'gprt-shotgroup-head' },
+        `${group.length} shots · ${time} · ${spanText}`,
+        h('button', { onclick: () => toggleGroup(group), title: 'Select or unselect every shot in this group' }, 'Select')),
+      h('div', { class: 'gprt-tiles' }, group.map((it) => makeTile(it, idxOf.get(it.mediaKey), bucket))));
   }
 
   function makeTile(it, idx, bucket) {

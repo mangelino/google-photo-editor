@@ -4,6 +4,7 @@ A Tampermonkey userscript that adds a full-screen tool to photos.google.com:
 
 - Load photos and videos taken within a date range (Library, Archive, or both)
 - Filter what you loaded by type (photos or videos) and by file extension (JPG, HEIC, PNG, MP4, …)
+- Group shots taken within N seconds of each other (bursts, retakes) and optionally show only those groups
 - Select them one by one, by shift-click range, by day, or all at once
 - Add the selection to an existing album (own or shared) or to a new one
 - Open an album to browse its contents, then remove selected items from it or move them to the trash
@@ -44,6 +45,10 @@ When changing the script, bump `@version` in the header or installed copies won'
 | Viewer | Previous / next | `←` / `→` |
 | Viewer | Toggle selection | `Space` or `x` |
 | Any    | Close | `Esc` |
+
+**Group shots** (filter bar) boxes together consecutive shots taken at most the chosen number of seconds apart
+(default 3 s, up to 3600). Each group shows its shot count, time and span, plus a **Select** button. A typical burst
+cleanup: tick **Only groups**, open the shots in the viewer to compare, select the ones you don't want, **Move to trash**.
 
 **Remove from album** (shown only when an album is open) takes the items out of that album; they stay in your library.
 **Move to trash** deletes the items from your library and from every album they are in. You can restore them from
