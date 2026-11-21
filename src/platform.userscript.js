@@ -33,7 +33,7 @@ const platform = {
   },
 
   onOpenRequest(open) {
-    GM_registerMenuCommand('Open Range Tools', open);
+    GM_registerMenuCommand('Open Light Table', open);
   },
 };
 

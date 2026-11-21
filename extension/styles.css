@@ -1,4 +1,4 @@
-/* Range Tools styles. All classes are prefixed gprt- to avoid clashing with the page. */
+/* Light Table styles. All classes are prefixed gprt- to avoid clashing with the page. */
 .gprt-launch { position: fixed; left: 16px; bottom: 16px; z-index: 2147483000; padding: 10px 14px;
   border: 0; border-radius: 20px; background: #1a73e8; color: #fff; font: 500 14px/1 system-ui, sans-serif;
   box-shadow: 0 2px 8px rgba(0,0,0,.3); cursor: pointer; }

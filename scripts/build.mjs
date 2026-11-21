@@ -1,7 +1,9 @@
 // Builds both distributions from src/:
-//   google-photos-range-tools.user.js   Tampermonkey userscript (path is the auto-update URL; keep it)
+//   light-table-for-google-photos.user.js   Tampermonkey userscript (its path is the @updateURL)
+//   google-photos-range-tools.user.js       same file at the pre-rename path, so installs made
+//                                           before the rename keep finding updates
 //   extension/                          unpacked Chrome extension (Manifest V3)
-// `--zip` also writes range-tools-extension-<version>.zip for the Chrome Web Store.
+// `--zip` also writes light-table-extension-<version>.zip for releases / the Chrome Web Store.
 // No dependencies; version and description come from package.json.
 
 import { readFileSync, writeFileSync, mkdirSync, rmSync, cpSync, existsSync } from 'node:fs';
@@ -24,7 +26,8 @@ const header = read('src/header.userscript.js')
   .replace('{{version}}', pkg.version)
   .replace('{{description}}', pkg.description);
 const userscript = `${header}\n${iife(`const STYLES = ${JSON.stringify(css)};`, read('src/platform.userscript.js'), core)}`;
-writeFileSync(join(root, 'google-photos-range-tools.user.js'), userscript);
+writeFileSync(join(root, 'light-table-for-google-photos.user.js'), userscript);
+writeFileSync(join(root, 'google-photos-range-tools.user.js'), userscript); // legacy path
 
 // ---- Chrome extension ----
 const ext = join(root, 'extension');
@@ -39,13 +42,13 @@ cpSync(join(root, 'src/icons'), join(ext, 'icons'), { recursive: true });
 const icons = { 16: 'icons/icon16.png', 32: 'icons/icon32.png', 48: 'icons/icon48.png', 128: 'icons/icon128.png' };
 const manifest = {
   manifest_version: 3,
-  name: 'Range Tools for Google Photos',
-  short_name: 'Range Tools',
+  name: 'Light Table for Google Photos',
+  short_name: 'Light Table',
   version: pkg.version,
   description: pkg.description, // Chrome Web Store limit: 132 chars
-  homepage_url: 'https://github.com/mangelino/google-photo-editor',
+  homepage_url: 'https://github.com/mangelino/light-table-for-google-photos',
   icons,
-  action: { default_title: 'Open Range Tools', default_icon: icons },
+  action: { default_title: 'Open Light Table', default_icon: icons },
   background: { service_worker: 'background.js' },
   permissions: ['downloads'],
   content_scripts: [
@@ -60,10 +63,10 @@ const manifest = {
 };
 writeFileSync(join(ext, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 
-console.log(`Built v${pkg.version}: google-photos-range-tools.user.js, extension/`);
+console.log(`Built v${pkg.version}: light-table-for-google-photos.user.js (+ legacy copy), extension/`);
 
 if (process.argv.includes('--zip')) {
-  const zip = join(root, `range-tools-extension-${pkg.version}.zip`);
+  const zip = join(root, `light-table-extension-${pkg.version}.zip`);
   if (existsSync(zip)) rmSync(zip);
   execFileSync('zip', ['-qr', zip, '.'], { cwd: ext });
   console.log(`Packaged ${zip}`);

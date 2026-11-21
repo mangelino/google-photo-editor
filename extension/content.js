@@ -1160,14 +1160,14 @@
 
   function ensureLauncher() {
     if (document.querySelector('.gprt-launch')) return;
-    document.body.append(h('button', { class: 'gprt-launch', onclick: openApp, title: 'Google Photos Range Tools' }, 'Range Tools'));
+    document.body.append(h('button', { class: 'gprt-launch', onclick: openApp, title: 'Light Table for Google Photos' }, 'Light Table'));
   }
 
   try {
     ensureLauncher();
     setInterval(ensureLauncher, 2000); // the page may re-render <body> children
     platform.onOpenRequest(openApp);
-    console.info('[gprt] Range Tools loaded');
+    console.info('[gprt] Light Table loaded');
   } catch (e) {
     console.error('[gprt] failed to start', e);
   }

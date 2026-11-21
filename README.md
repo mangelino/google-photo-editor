@@ -1,4 +1,4 @@
-# Google Photos Range Tools
+# Light Table for Google Photos
 
 A Tampermonkey userscript that adds a full-screen tool to photos.google.com:
 
@@ -19,9 +19,9 @@ Two equivalent builds of the same code. Use one, not both, or you'll get two lau
 ### Option A: Tampermonkey userscript (auto-updates)
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/).
-2. Open [the raw script](https://raw.githubusercontent.com/mangelino/google-photo-editor/main/google-photos-range-tools.user.js) and click **Install** in the Tampermonkey page that appears.
-3. Open <https://photos.google.com>. Click **Range Tools** in the bottom-left corner
-   (or use the Tampermonkey menu → *Open Range Tools*).
+2. Open [the raw script](https://raw.githubusercontent.com/mangelino/light-table-for-google-photos/main/light-table-for-google-photos.user.js) and click **Install** in the Tampermonkey page that appears.
+3. Open <https://photos.google.com>. Click **Light Table** in the bottom-left corner
+   (or use the Tampermonkey menu → *Open Light Table*).
 
 On Chrome, Tampermonkey needs "Allow User Scripts" enabled in the extension's details page.
 
@@ -30,11 +30,11 @@ Tampermonkey checks for a new version every 24 hours by default. To check right 
 
 ### Option B: Chrome extension (unpacked)
 
-1. Download `range-tools-extension-<version>.zip` from the [latest release](https://github.com/mangelino/google-photo-editor/releases/latest)
+1. Download `light-table-extension-<version>.zip` from the [latest release](https://github.com/mangelino/light-table-for-google-photos/releases/latest)
    and unzip it into a folder you'll keep (Chrome loads the extension from there).
 2. Open `chrome://extensions` (or `edge://extensions`), turn on **Developer mode** (top right), click
    **Load unpacked**, and pick the unzipped folder. (From a clone of this repo, pick `extension/`.)
-3. Open <https://photos.google.com> and click **Range Tools** in the bottom-left corner or the extension's toolbar icon.
+3. Open <https://photos.google.com> and click **Light Table** in the bottom-left corner or the extension's toolbar icon.
 
 Unpacked extensions don't update themselves: download the new zip, replace the folder's contents, and click the
 reload icon on the extension's card.
@@ -52,16 +52,16 @@ All code lives in `src/`; `npm run build` generates both builds (Node 18+, no de
 | `src/platform.extension.js` | Extension content-script adapter: messages the background worker |
 | `src/extension.background.js` | Extension service worker: toolbar icon, `chrome.downloads` |
 | `src/header.userscript.js` | Userscript metadata block |
-| `scripts/build.mjs` | Writes `google-photos-range-tools.user.js` and `extension/` |
+| `scripts/build.mjs` | Writes `light-table-for-google-photos.user.js` (plus a copy at the old name `google-photos-range-tools.user.js` for pre-rename installs) and `extension/` |
 | `scripts/make-icons.mjs` | Regenerates `src/icons/` (`npm run icons`) |
 
-Don't edit `google-photos-range-tools.user.js` or `extension/` by hand; they're generated and committed so both
+Don't edit the `.user.js` files or `extension/` by hand; they're generated and committed so both
 install methods work straight from GitHub.
 
 To release: bump `version` in `package.json` (it feeds the userscript `@version` and the manifest), run
 `npm run build`, commit, push. Installed userscripts only update when the version goes up.
 `npm run package` also writes the extension `.zip`; attach it to a GitHub release
-(`gh release create v<version> range-tools-extension-<version>.zip google-photos-range-tools.user.js`).
+(`gh release create v<version> light-table-extension-<version>.zip light-table-for-google-photos.user.js`).
 
 ## Use
 

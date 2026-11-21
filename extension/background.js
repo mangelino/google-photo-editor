@@ -1,5 +1,5 @@
 // GENERATED FILE: edit src/ and run `npm run build`.
-// Range Tools service worker.
+// Light Table service worker.
 
 const PHOTOS = 'https://photos.google.com/';
 
