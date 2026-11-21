@@ -14,21 +14,51 @@ A Tampermonkey userscript that adds a full-screen tool to photos.google.com:
 
 ## Install
 
+Two equivalent builds of the same code. Use one, not both, or you'll get two launchers.
+
+### Option A: Tampermonkey userscript (auto-updates)
+
 1. Install [Tampermonkey](https://www.tampermonkey.net/).
 2. Open [the raw script](https://raw.githubusercontent.com/mangelino/google-photo-editor/main/google-photos-range-tools.user.js) and click **Install** in the Tampermonkey page that appears.
-   If you installed by pasting the code earlier, delete that copy first so you don't run two.
 3. Open <https://photos.google.com>. Click **Range Tools** in the bottom-left corner
    (or use the Tampermonkey menu → *Open Range Tools*).
 
 On Chrome, Tampermonkey needs "Allow User Scripts" enabled in the extension's details page.
 
-### Updates
+Tampermonkey checks for a new version every 24 hours by default. To check right away: Tampermonkey dashboard →
+*Utilities* → *Check for userscript updates*.
 
-Tampermonkey checks `@updateURL` (the file on `main`) periodically, every 24 hours by default, and installs a new
-version when the `@version` number is higher. To check right away: Tampermonkey dashboard → *Utilities* →
-*Check for userscript updates*, or the script's *Check for updates* menu entry.
+### Option B: Chrome extension (unpacked)
 
-When changing the script, bump `@version` in the header or installed copies won't update.
+1. Download or clone this repository.
+2. Open `chrome://extensions`, turn on **Developer mode** (top right), click **Load unpacked**, and pick the
+   `extension/` folder.
+3. Open <https://photos.google.com> and click **Range Tools** in the bottom-left corner or the extension's toolbar icon.
+
+Unpacked extensions don't update themselves: after `git pull`, click the reload icon on the extension's card.
+The extension asks only for the `downloads` permission and runs only on photos.google.com.
+
+## Development
+
+All code lives in `src/`; `npm run build` generates both builds (Node 18+, no dependencies):
+
+| File | Purpose |
+|------|---------|
+| `src/core.js` | The app: RPC layer, UI, viewer (shared) |
+| `src/styles.css` | Styles (shared) |
+| `src/platform.userscript.js` | Tampermonkey adapter: `GM_*` calls for styles, downloads, menu |
+| `src/platform.extension.js` | Extension content-script adapter: messages the background worker |
+| `src/extension.background.js` | Extension service worker: toolbar icon, `chrome.downloads` |
+| `src/header.userscript.js` | Userscript metadata block |
+| `scripts/build.mjs` | Writes `google-photos-range-tools.user.js` and `extension/` |
+| `scripts/make-icons.mjs` | Regenerates `src/icons/` (`npm run icons`) |
+
+Don't edit `google-photos-range-tools.user.js` or `extension/` by hand; they're generated and committed so both
+install methods work straight from GitHub.
+
+To release: bump `version` in `package.json` (it feeds the userscript `@version` and the manifest), run
+`npm run build`, commit, push. Installed userscripts only update when the version goes up.
+`npm run package` also writes a `.zip` for the Chrome Web Store.
 
 ## Use
 

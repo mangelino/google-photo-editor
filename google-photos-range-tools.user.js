@@ -2,8 +2,8 @@
 // @name         Google Photos Range Tools
 // @namespace    https://github.com/mangelino/google-photo-editor
 // @license      MIT-0
-// @version      0.4.0
-// @description  Select Google Photos by date range or album, filter by type, add to or remove from albums, trash, zoom, and download originals.
+// @version      0.5.0
+// @description  Pick Google Photos by date or album, filter by type, group bursts, manage albums, trash, zoom and download originals.
 // @homepageURL  https://github.com/mangelino/google-photo-editor
 // @supportURL   https://github.com/mangelino/google-photo-editor/issues
 // @updateURL    https://raw.githubusercontent.com/mangelino/google-photo-editor/main/google-photos-range-tools.user.js
@@ -21,16 +21,75 @@
 // ==/UserScript==
 
 /*
+ * GENERATED FILE: edit src/ and run `npm run build`.
+ *
  * Uses Google Photos' undocumented web RPC endpoint (batchexecute), the same
  * one photos.google.com uses. RPC ids and payload layouts follow
  * Google Photos Toolkit (https://github.com/xob0t/Google-Photos-Toolkit, MIT).
  * Google can change these without notice; if something breaks, the RPC layer
- * at the top of this file is the place to look.
+ * in src/core.js is the place to look.
  */
 
 (() => {
   'use strict';
-  console.info('[gprt] starting');
+
+  const STYLES = "/* Range Tools styles. All classes are prefixed gprt- to avoid clashing with the page. */\n.gprt-launch { position: fixed; left: 16px; bottom: 16px; z-index: 2147483000; padding: 10px 14px;\n  border: 0; border-radius: 20px; background: #1a73e8; color: #fff; font: 500 14px/1 system-ui, sans-serif;\n  box-shadow: 0 2px 8px rgba(0,0,0,.3); cursor: pointer; }\n.gprt-root { position: fixed; inset: 0; z-index: 2147483001; display: flex; flex-direction: column;\n  background: #121212; color: #e8e8e8; font: 14px/1.4 system-ui, sans-serif; --sz: 200px; }\n.gprt-root * { box-sizing: border-box; }\n.gprt-root button, .gprt-root input, .gprt-root select { font: inherit; color: inherit; }\n.gprt-root button { background: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 6px; padding: 5px 10px; cursor: pointer; }\n.gprt-root button:hover:not(:disabled) { background: #353535; }\n.gprt-root button:disabled { opacity: .45; cursor: default; }\n.gprt-root button.gprt-primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }\n.gprt-root input[type=date], .gprt-root input[type=text], .gprt-root select {\n  background: #1e1e1e; border: 1px solid #3a3a3a; border-radius: 6px; padding: 4px 6px; color-scheme: dark; }\n.gprt-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; border-bottom: 1px solid #2a2a2a; }\n.gprt-group { display: flex; align-items: center; gap: 6px; }\n.gprt-spacer { flex: 1; }\n.gprt-status { padding: 4px 14px; min-height: 24px; color: #aaa; font-size: 13px; border-bottom: 1px solid #222; }\n.gprt-status.gprt-err { color: #ff8a80; }\n.gprt-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 5px; border: 1px solid #3a3a3a;\n  border-radius: 12px; cursor: pointer; user-select: none; }\n.gprt-chip small { color: #999; }\n.gprt-grid { flex: 1; overflow-y: auto; padding: 8px 14px 40px; }\n.gprt-day { margin-top: 14px; }\n.gprt-dayhead { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; color: #ccc; font-weight: 500; }\n.gprt-dayhead button { padding: 2px 8px; font-size: 12px; }\n.gprt-tiles { display: flex; flex-wrap: wrap; gap: 4px; }\n.gprt-shotgroup { display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 1px solid #3d5a80;\n  border-radius: 6px; background: #18202b; max-width: 100%; }\n.gprt-shotgroup-head { display: flex; align-items: center; gap: 8px; padding: 0 2px; font-size: 12px; color: #9fb7d6; }\n.gprt-shotgroup-head button { padding: 1px 8px; font-size: 12px; }\n.gprt-tile { position: relative; width: var(--sz); height: var(--sz); background: #222; overflow: hidden; cursor: zoom-in; border-radius: 2px; }\n.gprt-fit .gprt-tile { width: calc(var(--sz) * var(--ar)); }\n.gprt-tile img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .12s; }\n.gprt-tile.gprt-sel img { transform: scale(.88); border-radius: 4px; }\n.gprt-tile.gprt-sel { background: #1a3a66; }\n.gprt-check { position: absolute; top: 6px; left: 6px; width: 22px; height: 22px; border-radius: 50%;\n  border: 2px solid #fff; background: rgba(0,0,0,.25); opacity: 0; cursor: pointer; transition: opacity .1s; }\n.gprt-tile:hover .gprt-check, .gprt-has-sel .gprt-check, .gprt-tile.gprt-sel .gprt-check { opacity: 1; }\n.gprt-tile.gprt-sel .gprt-check { background: #1a73e8; border-color: #1a73e8; }\n.gprt-tile.gprt-sel .gprt-check::after { content: ''; position: absolute; left: 5px; top: 1px; width: 6px; height: 11px;\n  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }\n.gprt-badge { position: absolute; right: 6px; bottom: 6px; padding: 1px 5px; border-radius: 3px; background: rgba(0,0,0,.6); font-size: 12px; }\n.gprt-empty { padding: 60px 0; text-align: center; color: #888; }\n.gprt-viewer { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; background: #000; }\n.gprt-viewer .gprt-bar { background: #111; }\n.gprt-stage { position: relative; flex: 1; overflow: hidden; cursor: grab; touch-action: none; }\n.gprt-stage.gprt-drag { cursor: grabbing; }\n.gprt-stage img { position: absolute; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; max-width: none; }\n.gprt-zoom { min-width: 56px; text-align: center; font-variant-numeric: tabular-nums; }\n.gprt-nav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 1; width: 44px; height: 64px;\n  background: rgba(30,30,30,.6) !important; border: 0 !important; font-size: 22px !important; }\n.gprt-modal-bg { position: absolute; inset: 0; z-index: 3; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; }\n.gprt-modal { width: min(480px, 92vw); max-height: 80vh; display: flex; flex-direction: column; gap: 10px;\n  background: #1e1e1e; border: 1px solid #333; border-radius: 10px; padding: 16px; }\n.gprt-modal h3 { margin: 0; font-size: 16px; }\n.gprt-albums { flex: 1; min-height: 120px; overflow-y: auto; border: 1px solid #333; border-radius: 6px; }\n.gprt-album { display: flex; justify-content: space-between; gap: 8px; padding: 7px 10px; cursor: pointer; }\n.gprt-album:hover { background: #2a2a2a; }\n.gprt-album.gprt-picked { background: #1a3a66; }\n.gprt-album small { color: #999; white-space: nowrap; }\n.gprt-row { display: flex; gap: 8px; align-items: center; }\n.gprt-row input[type=text] { flex: 1; }\n";
+
+  // Tampermonkey adapter. STYLES is injected by the build.
+
+  GM_addStyle(STYLES);
+
+  const platform = {
+    // Fetch with the user's cookies (GM_xmlhttpRequest bypasses CORS), then save via a blob link.
+    async download({ url, fileName, fallbackName }) {
+      const r = await new Promise((resolve, reject) => {
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url,
+          responseType: 'blob',
+          timeout: 10 * 60 * 1000,
+          onload: (res) => (res.status >= 200 && res.status < 300 ? resolve(res) : reject(new Error(`HTTP ${res.status}`))),
+          onerror: () => reject(new Error('network error')),
+          ontimeout: () => reject(new Error('timeout')),
+        });
+      });
+      const header = (name) => {
+        const m = new RegExp(`^${name}:\\s*(.*)$`, 'im').exec(r.responseHeaders || '');
+        return m ? m[1].trim() : '';
+      };
+      const name = fileName || filenameFromDisposition(header('content-disposition')) || fallbackName(header('content-type'));
+      const blobUrl = URL.createObjectURL(r.response);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = name;
+      a.style.display = 'none';
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60 * 1000);
+    },
+
+    onOpenRequest(open) {
+      GM_registerMenuCommand('Open Range Tools', open);
+    },
+  };
+
+  function filenameFromDisposition(cd) {
+    if (!cd) return null;
+    const star = /filename\*\s*=\s*(?:UTF-8'')?([^;]+)/i.exec(cd);
+    const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(cd);
+    const raw = (star || plain)?.[1]?.trim();
+    if (!raw) return null;
+    try {
+      return decodeURIComponent(raw);
+    } catch {
+      return raw;
+    }
+  }
+
+  // Shared app code. Built into the userscript and the Chrome extension by
+  // scripts/build.mjs, wrapped in an IIFE after a platform adapter that defines
+  // `platform` (download, onOpenRequest).
 
   const W = window;
   const HOUR = 3600 * 1000;
@@ -279,38 +338,6 @@
 
   const originalUrl = (it) => `${it.thumb}=${it.isVideo ? 'dv' : 'd'}`;
 
-  function gmGetBlob(url) {
-    return new Promise((resolve, reject) => {
-      GM_xmlhttpRequest({
-        method: 'GET',
-        url,
-        responseType: 'blob',
-        timeout: 10 * 60 * 1000,
-        onload: (r) => (r.status >= 200 && r.status < 300 ? resolve(r) : reject(new Error(`HTTP ${r.status}`))),
-        onerror: () => reject(new Error('network error')),
-        ontimeout: () => reject(new Error('timeout')),
-      });
-    });
-  }
-
-  function headerValue(headers, name) {
-    const m = new RegExp(`^${name}:\\s*(.*)$`, 'im').exec(headers || '');
-    return m ? m[1].trim() : '';
-  }
-
-  function filenameFromDisposition(cd) {
-    if (!cd) return null;
-    const star = /filename\*\s*=\s*(?:UTF-8'')?([^;]+)/i.exec(cd);
-    const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(cd);
-    const raw = (star || plain)?.[1]?.trim();
-    if (!raw) return null;
-    try {
-      return decodeURIComponent(raw);
-    } catch {
-      return raw;
-    }
-  }
-
   function fallbackName(it, contentType) {
     const extByType = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/heic': 'heic', 'image/webp': 'webp', 'image/gif': 'gif', 'video/mp4': 'mp4', 'video/quicktime': 'mov' };
     const ext = extByType[contentType.split(';')[0]] || (it.isVideo ? 'mp4' : 'jpg');
@@ -318,17 +345,12 @@
     return `${d}_${it.mediaKey.slice(-8)}.${ext}`;
   }
 
-  async function downloadItem(it) {
-    const r = await gmGetBlob(originalUrl(it));
-    const type = headerValue(r.responseHeaders, 'content-type');
-    const name = it.fileName || filenameFromDisposition(headerValue(r.responseHeaders, 'content-disposition')) || fallbackName(it, type);
-    const url = URL.createObjectURL(r.response);
-    const a = h('a', { href: url, download: name, style: { display: 'none' } });
-    document.body.append(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60 * 1000);
-  }
+  // Platform adapters (userscript / extension) implement the actual transfer.
+  const downloadItem = (it) => platform.download({
+    url: originalUrl(it),
+    fileName: it.fileName,
+    fallbackName: (contentType) => fallbackName(it, contentType),
+  });
 
   async function runPool(items, concurrency, worker, signal) {
     let next = 0;
@@ -386,70 +408,6 @@
   // Styles
   // ---------------------------------------------------------------------------
 
-  GM_addStyle(`
-    .gprt-launch { position: fixed; left: 16px; bottom: 16px; z-index: 2147483000; padding: 10px 14px;
-      border: 0; border-radius: 20px; background: #1a73e8; color: #fff; font: 500 14px/1 system-ui, sans-serif;
-      box-shadow: 0 2px 8px rgba(0,0,0,.3); cursor: pointer; }
-    .gprt-root { position: fixed; inset: 0; z-index: 2147483001; display: flex; flex-direction: column;
-      background: #121212; color: #e8e8e8; font: 14px/1.4 system-ui, sans-serif; --sz: 200px; }
-    .gprt-root * { box-sizing: border-box; }
-    .gprt-root button, .gprt-root input, .gprt-root select { font: inherit; color: inherit; }
-    .gprt-root button { background: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 6px; padding: 5px 10px; cursor: pointer; }
-    .gprt-root button:hover:not(:disabled) { background: #353535; }
-    .gprt-root button:disabled { opacity: .45; cursor: default; }
-    .gprt-root button.gprt-primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }
-    .gprt-root input[type=date], .gprt-root input[type=text], .gprt-root select {
-      background: #1e1e1e; border: 1px solid #3a3a3a; border-radius: 6px; padding: 4px 6px; color-scheme: dark; }
-    .gprt-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; border-bottom: 1px solid #2a2a2a; }
-    .gprt-group { display: flex; align-items: center; gap: 6px; }
-    .gprt-spacer { flex: 1; }
-    .gprt-status { padding: 4px 14px; min-height: 24px; color: #aaa; font-size: 13px; border-bottom: 1px solid #222; }
-    .gprt-status.gprt-err { color: #ff8a80; }
-    .gprt-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 5px; border: 1px solid #3a3a3a;
-      border-radius: 12px; cursor: pointer; user-select: none; }
-    .gprt-chip small { color: #999; }
-    .gprt-grid { flex: 1; overflow-y: auto; padding: 8px 14px 40px; }
-    .gprt-day { margin-top: 14px; }
-    .gprt-dayhead { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; color: #ccc; font-weight: 500; }
-    .gprt-dayhead button { padding: 2px 8px; font-size: 12px; }
-    .gprt-tiles { display: flex; flex-wrap: wrap; gap: 4px; }
-    .gprt-shotgroup { display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 1px solid #3d5a80;
-      border-radius: 6px; background: #18202b; max-width: 100%; }
-    .gprt-shotgroup-head { display: flex; align-items: center; gap: 8px; padding: 0 2px; font-size: 12px; color: #9fb7d6; }
-    .gprt-shotgroup-head button { padding: 1px 8px; font-size: 12px; }
-    .gprt-tile { position: relative; width: var(--sz); height: var(--sz); background: #222; overflow: hidden; cursor: zoom-in; border-radius: 2px; }
-    .gprt-fit .gprt-tile { width: calc(var(--sz) * var(--ar)); }
-    .gprt-tile img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .12s; }
-    .gprt-tile.gprt-sel img { transform: scale(.88); border-radius: 4px; }
-    .gprt-tile.gprt-sel { background: #1a3a66; }
-    .gprt-check { position: absolute; top: 6px; left: 6px; width: 22px; height: 22px; border-radius: 50%;
-      border: 2px solid #fff; background: rgba(0,0,0,.25); opacity: 0; cursor: pointer; transition: opacity .1s; }
-    .gprt-tile:hover .gprt-check, .gprt-has-sel .gprt-check, .gprt-tile.gprt-sel .gprt-check { opacity: 1; }
-    .gprt-tile.gprt-sel .gprt-check { background: #1a73e8; border-color: #1a73e8; }
-    .gprt-tile.gprt-sel .gprt-check::after { content: ''; position: absolute; left: 5px; top: 1px; width: 6px; height: 11px;
-      border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
-    .gprt-badge { position: absolute; right: 6px; bottom: 6px; padding: 1px 5px; border-radius: 3px; background: rgba(0,0,0,.6); font-size: 12px; }
-    .gprt-empty { padding: 60px 0; text-align: center; color: #888; }
-    .gprt-viewer { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; background: #000; }
-    .gprt-viewer .gprt-bar { background: #111; }
-    .gprt-stage { position: relative; flex: 1; overflow: hidden; cursor: grab; touch-action: none; }
-    .gprt-stage.gprt-drag { cursor: grabbing; }
-    .gprt-stage img { position: absolute; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; max-width: none; }
-    .gprt-zoom { min-width: 56px; text-align: center; font-variant-numeric: tabular-nums; }
-    .gprt-nav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 1; width: 44px; height: 64px;
-      background: rgba(30,30,30,.6) !important; border: 0 !important; font-size: 22px !important; }
-    .gprt-modal-bg { position: absolute; inset: 0; z-index: 3; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; }
-    .gprt-modal { width: min(480px, 92vw); max-height: 80vh; display: flex; flex-direction: column; gap: 10px;
-      background: #1e1e1e; border: 1px solid #333; border-radius: 10px; padding: 16px; }
-    .gprt-modal h3 { margin: 0; font-size: 16px; }
-    .gprt-albums { flex: 1; min-height: 120px; overflow-y: auto; border: 1px solid #333; border-radius: 6px; }
-    .gprt-album { display: flex; justify-content: space-between; gap: 8px; padding: 7px 10px; cursor: pointer; }
-    .gprt-album:hover { background: #2a2a2a; }
-    .gprt-album.gprt-picked { background: #1a3a66; }
-    .gprt-album small { color: #999; white-space: nowrap; }
-    .gprt-row { display: flex; gap: 8px; align-items: center; }
-    .gprt-row input[type=text] { flex: 1; }
-  `);
 
   // ---------------------------------------------------------------------------
   // App state and UI
@@ -1275,7 +1233,7 @@
   try {
     ensureLauncher();
     setInterval(ensureLauncher, 2000); // the page may re-render <body> children
-    GM_registerMenuCommand('Open Range Tools', openApp);
+    platform.onOpenRequest(openApp);
     console.info('[gprt] Range Tools loaded');
   } catch (e) {
     console.error('[gprt] failed to start', e);
