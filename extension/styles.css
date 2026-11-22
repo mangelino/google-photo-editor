@@ -6,6 +6,7 @@
   background: #121212; color: #e8e8e8; font: 14px/1.4 system-ui, sans-serif; --sz: 200px; }
 .gprt-root * { box-sizing: border-box; }
 .gprt-root button, .gprt-root input, .gprt-root select { font: inherit; color: inherit; }
+.gprt-root input.gprt-gap { color: #000; }
 .gprt-root button { background: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 6px; padding: 5px 10px; cursor: pointer; }
 .gprt-root button:hover:not(:disabled) { background: #353535; }
 .gprt-root button:disabled { opacity: .45; cursor: default; }

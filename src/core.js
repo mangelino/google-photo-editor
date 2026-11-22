@@ -445,7 +445,7 @@ function buildApp() {
   extChips = h('div', { class: 'gprt-group', style: { flexWrap: 'wrap' } });
   groupCountEl = h('small', { style: { color: '#999' } });
   const gapInput = h('input', {
-    type: 'number', min: '1', max: '3600', step: '1', value: String(S.groupGapSec),
+    type: 'number', class: 'gprt-gap', min: '1', max: '3600', step: '1', value: String(S.groupGapSec),
     style: { width: '64px' }, title: 'Shots taken at most this many seconds apart are grouped',
     onchange: (e) => {
       const v = Math.round(+e.target.value);
