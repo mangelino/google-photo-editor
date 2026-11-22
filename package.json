@@ -1,6 +1,6 @@
 {
   "name": "light-table-for-google-photos",
-  "version": "0.5.5",
+  "version": "0.6.0",
   "description": "Pick Google Photos by date or album, filter by type, group bursts, manage albums, trash, zoom and download originals.",
   "private": true,
   "type": "module",

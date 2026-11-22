@@ -353,7 +353,7 @@ const S = {
 };
 
 let root, grid, statusEl, selCountEl, btnAlbum, btnDownload, btnCancel, btnLoad, inFrom, inTo, inSource, filterBar, extChips;
-let btnOpenAlbum, btnRemove, btnTrash, groupCountEl;
+let btnOpenAlbum, btnRemove, btnTrash, btnCompare, groupCountEl;
 
 const UNKNOWN_EXT = '(unknown)';
 function extOf(it) {
@@ -440,6 +440,10 @@ function buildApp() {
   btnOpenAlbum = h('button', { onclick: onOpenAlbum, title: 'Load the contents of an album instead of a date range' }, 'Open album…');
   btnRemove = h('button', { onclick: removeSelectedFromAlbum, style: { display: 'none' } }, 'Remove from album');
   btnTrash = h('button', { onclick: trashSelected, style: { color: '#ff8a80' } }, 'Move to trash');
+  btnCompare = h('button', {
+    title: 'Compare the first selected photo with the others side by side',
+    onclick: () => openCompare(S.items.findIndex((it) => S.selected.has(it.mediaKey))),
+  }, 'Compare');
 
   const sizeLabel = h('span', { class: 'gprt-zoom' }, `${S.size}px`);
   const sizeSlider = h('input', {
@@ -503,7 +507,7 @@ function buildApp() {
       h('div', { class: 'gprt-group' },
         h('button', { onclick: () => selectAll(true) }, 'Select all'),
         h('button', { onclick: () => selectAll(false) }, 'Clear'),
-        selCountEl, btnAlbum, btnDownload, btnRemove, btnTrash),
+        selCountEl, btnCompare, btnAlbum, btnDownload, btnRemove, btnTrash),
       h('div', { class: 'gprt-spacer' }),
       h('button', { onclick: closeApp, title: 'Close (Esc)' }, '✕')),
     filterBar,
@@ -520,6 +524,7 @@ function openApp() {
 }
 
 function closeApp() {
+  if (S.compare) closeCompare();
   if (S.viewer) closeViewer();
   root?.remove();
   window.removeEventListener('keydown', onKey, true);
@@ -695,6 +700,7 @@ function updateSelectionUi() {
   btnAlbum.disabled = n === 0 || !!S.task;
   btnDownload.disabled = n === 0 || !!S.task;
   btnTrash.disabled = n === 0 || !!S.task;
+  btnCompare.disabled = n === 0 || !!S.task;
   btnRemove.disabled = n === 0 || !!S.task;
   btnRemove.style.display = S.source?.type === 'album' ? '' : 'none';
   btnOpenAlbum.disabled = !!S.task;
@@ -934,6 +940,7 @@ function openViewer(idx) {
         h('button', { onclick: () => fit(), title: 'Fit (0)' }, 'Fit'),
         h('button', { onclick: () => actualSize(), title: 'Actual pixels (1)' }, '100%')),
       selBtn,
+      h('button', { onclick: () => openCompare(V.idx), title: 'Compare this photo side by side with others (C)' }, 'Compare'),
       h('button', { onclick: () => downloadItem(S.items[V.idx]).catch((e) => setStatus(e.message, true)) }, 'Download'),
       openLink,
       h('button', { onclick: closeViewer, title: 'Close (Esc)' }, '✕')),
@@ -943,7 +950,7 @@ function openViewer(idx) {
     h('button', { class: 'gprt-nav', style: { right: '8px' }, onclick: () => go(1) }, '›'));
   root.append(el);
 
-  const V = { el, idx, z: 1, tx: 0, ty: 0, baseW: 0, baseH: 0, left: 0, top: 0, loadedW: 0, timer: 0, go, zoomBy, fit, actualSize, toggleSel: () => selBtn.click() };
+  const V = { el, idx, z: 1, tx: 0, ty: 0, baseW: 0, baseH: 0, left: 0, top: 0, loadedW: 0, timer: 0, go, zoomBy, fit, actualSize, toggleSel: () => selBtn.click(), refreshSel: () => syncSel() };
   S.viewer = V;
 
   function item() {
@@ -1104,6 +1111,288 @@ function closeViewer() {
 }
 
 // ---------------------------------------------------------------------------
+// X|Y comparison: X stays fixed on the left, Y is picked from a ribbon below.
+// Both panes share one zoom level and one pan position (in image coordinates),
+// so the same detail is shown side by side.
+// ---------------------------------------------------------------------------
+
+function compareCandidates(x, mode) {
+  if (mode === 'selected') return S.items.filter((it) => it === x || S.selected.has(it.mediaKey));
+  if (mode === 'group') return groupShots(S.items, S.groupGapSec * 1000).find((g) => g.includes(x)) || [x];
+  return S.items;
+}
+
+function defaultCompareMode(x) {
+  if (S.selected.size >= 2 && compareCandidates(x, 'selected').length >= 2) return 'selected';
+  if (compareCandidates(x, 'group').length >= 2) return 'group';
+  return 'all';
+}
+
+function openCompare(xIdx) {
+  const x0 = S.items[xIdx];
+  if (!x0) return;
+  const C = { x: x0, y: null, mode: defaultCompareMode(x0), list: [], z: 1, cu: 0.5, cv: 0.5, timer: 0 };
+
+  const zoomLabel = h('span', { class: 'gprt-zoom' });
+  const modeSel = h('select', { title: 'Which photos the ribbon offers for Y', onchange: (e) => { C.mode = e.target.value; buildRibbon(); } },
+    h('option', { value: 'group' }, `Same burst (≤${S.groupGapSec}s)`),
+    h('option', { value: 'selected' }, 'Selected photos'),
+    h('option', { value: 'all' }, 'All shown photos'));
+  modeSel.value = C.mode;
+  const ribbon = h('div', { class: 'gprt-ribbon' });
+  const panes = [makePane('X'), makePane('Y')];
+  const [PX, PY] = panes;
+
+  const el = h('div', { class: 'gprt-viewer gprt-compare' },
+    h('div', { class: 'gprt-bar' },
+      h('strong', {}, 'Compare'),
+      h('div', { class: 'gprt-group' }, 'Ribbon', modeSel),
+      h('div', { class: 'gprt-spacer' }),
+      h('div', { class: 'gprt-group' },
+        h('button', { onclick: () => zoomBy(1 / 1.5), title: 'Zoom out (-)' }, '−'),
+        zoomLabel,
+        h('button', { onclick: () => zoomBy(1.5), title: 'Zoom in (+)' }, '+'),
+        h('button', { onclick: () => fit(), title: 'Fit (0)' }, 'Fit'),
+        h('button', { onclick: () => actualSize(), title: 'Actual pixels of X (1)' }, '100%')),
+      h('button', { onclick: () => swap(), title: 'Make Y the fixed photo (S)' }, '⇄ Swap'),
+      h('button', { onclick: closeCompare, title: 'Close (Esc)' }, '✕')),
+    h('div', { class: 'gprt-panes' }, PX.el, PY.el),
+    ribbon);
+  root.append(el);
+  S.compare = Object.assign(C, { el, go, swap, zoomBy, fit, actualSize, onResize, toggleSel: (which) => toggleSel(which === 'x' ? PX : PY) });
+  window.addEventListener('resize', onResize);
+
+  setPane(PX, C.x);
+  buildRibbon();
+
+  function makePane(label) {
+    const img = h('img', { alt: '', draggable: 'false' });
+    const info = h('span', { class: 'gprt-pane-info' });
+    const sel = h('button', { onclick: () => { toggleSel(P); } });
+    const stage = h('div', { class: 'gprt-stage' }, img, h('div', { class: `gprt-pane-label gprt-pane-${label.toLowerCase()}` }, label));
+    const P = { label, el: null, img, info, sel, stage, it: null, loadedW: 0, baseW: 1, baseH: 1, left: 0, top: 0, W: 1, H: 1 };
+    P.el = h('div', { class: 'gprt-pane' }, h('div', { class: 'gprt-pane-head' }, info, sel), stage);
+
+    stage.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      if (!P.it) return;
+      const r = stage.getBoundingClientRect();
+      zoomAt(P, C.z * Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top);
+    }, { passive: false });
+    stage.addEventListener('dblclick', (e) => {
+      if (e.target !== img) return;
+      const r = stage.getBoundingClientRect();
+      if (C.z > 1.01) fit();
+      else zoomAt(P, Math.max(P.it.width ? P.it.width / P.baseW : 2, 2), e.clientX - r.left, e.clientY - r.top);
+    });
+    let drag = null;
+    stage.addEventListener('pointerdown', (e) => {
+      if (!P.it) return;
+      drag = { x: e.clientX, y: e.clientY, cu: C.cu, cv: C.cv };
+      stage.setPointerCapture?.(e.pointerId);
+      stage.classList.add('gprt-drag');
+    });
+    stage.addEventListener('pointermove', (e) => {
+      if (!drag) return;
+      C.cu = drag.cu - (e.clientX - drag.x) / (C.z * P.baseW);
+      C.cv = drag.cv - (e.clientY - drag.y) / (C.z * P.baseH);
+      apply();
+    });
+    const endDrag = () => { drag = null; stage.classList.remove('gprt-drag'); };
+    stage.addEventListener('pointerup', endDrag);
+    stage.addEventListener('pointercancel', endDrag);
+    return P;
+  }
+
+  function setPane(P, it) {
+    P.it = it;
+    P.loadedW = 0;
+    if (!it) {
+      P.img.removeAttribute('src');
+      P.img.style.display = 'none';
+      P.info.textContent = 'Pick a photo from the ribbon below';
+      P.sel.style.display = 'none';
+      return;
+    }
+    const tile = grid.querySelector(`[data-idx="${S.items.indexOf(it)}"] img`);
+    P.img.src = tile?.currentSrc || coverUrl(it, 256);
+    P.img.style.display = '';
+    P.info.textContent = `${it.fileName ? `${it.fileName} · ` : ''}${fmtDateTime(it)} · ${it.width}×${it.height}`;
+    P.info.title = P.info.textContent;
+    P.sel.style.display = '';
+    syncSel(P);
+    layout(P);
+    apply();
+  }
+
+  function syncSel(P) {
+    if (P.it) P.sel.textContent = S.selected.has(P.it.mediaKey) ? '✓ Selected' : 'Select';
+  }
+
+  function toggleSel(P) {
+    if (!P.it) return;
+    toggleItem(S.items.indexOf(P.it));
+    syncSel(P);
+    markRibbon();
+  }
+
+  function layout(P) {
+    const r = P.stage.getBoundingClientRect();
+    const ar = aspect(P.it);
+    P.W = r.width || 1;
+    P.H = r.height || 1;
+    P.baseW = Math.min(P.W, P.H * ar) || 1;
+    P.baseH = P.baseW / ar;
+    P.left = (P.W - P.baseW) / 2;
+    P.top = (P.H - P.baseH) / 2;
+  }
+
+  // Keep the shared centre inside X's image so you can't pan into empty space.
+  function clampCenter() {
+    const hw = PX.W / (2 * C.z * PX.baseW);
+    const hh = PX.H / (2 * C.z * PX.baseH);
+    C.cu = hw >= 0.5 ? 0.5 : Math.min(1 - hw, Math.max(hw, C.cu));
+    C.cv = hh >= 0.5 ? 0.5 : Math.min(1 - hh, Math.max(hh, C.cv));
+  }
+
+  function translate(P) {
+    return [P.W / 2 - P.left - C.z * C.cu * P.baseW, P.H / 2 - P.top - C.z * C.cv * P.baseH];
+  }
+
+  function apply() {
+    clampCenter();
+    for (const P of panes) {
+      if (!P.it) continue;
+      const [tx, ty] = translate(P);
+      Object.assign(P.img.style, {
+        width: `${P.baseW}px`, height: `${P.baseH}px`, left: `${P.left}px`, top: `${P.top}px`,
+        transform: `translate(${tx}px, ${ty}px) scale(${C.z})`,
+      });
+    }
+    zoomLabel.textContent = C.x.width ? `${Math.round((PX.baseW * C.z * 100) / C.x.width)}%` : `${C.z.toFixed(1)}×`;
+    clearTimeout(C.timer);
+    C.timer = setTimeout(() => panes.forEach(upgrade), 120);
+  }
+
+  function upgrade(P) {
+    const it = P.it;
+    if (!it) return;
+    const need = Math.ceil(P.baseW * C.z * (window.devicePixelRatio || 1));
+    const step = Math.ceil(need / 256) * 256;
+    const target = it.width ? Math.min(step, it.width) : step;
+    if (target <= P.loadedW) return;
+    const hi = new Image();
+    hi.onload = () => {
+      if (S.compare !== C || P.it !== it) return;
+      P.img.src = hi.src;
+      P.loadedW = Math.max(P.loadedW, target);
+    };
+    hi.src = widthUrl(it, target);
+  }
+
+  function maxZoom() {
+    return Math.max(8, C.x.width ? (C.x.width / PX.baseW) * 4 : 8);
+  }
+
+  // Zoom keeping the image point under (sx, sy) of pane P in place.
+  function zoomAt(P, z2, sx, sy) {
+    z2 = Math.max(1, Math.min(maxZoom(), z2));
+    const [tx, ty] = translate(P);
+    const ux = (sx - P.left - tx) / (C.z * P.baseW);
+    const uy = (sy - P.top - ty) / (C.z * P.baseH);
+    C.z = z2;
+    C.cu = ux - (sx - P.W / 2) / (z2 * P.baseW);
+    C.cv = uy - (sy - P.H / 2) / (z2 * P.baseH);
+    apply();
+  }
+
+  function zoomBy(f) {
+    zoomAt(PX, C.z * f, PX.W / 2, PX.H / 2);
+  }
+
+  function fit() {
+    C.z = 1;
+    C.cu = 0.5;
+    C.cv = 0.5;
+    apply();
+  }
+
+  function actualSize() {
+    if (C.x.width) zoomAt(PX, C.x.width / PX.baseW, PX.W / 2, PX.H / 2);
+  }
+
+  function buildRibbon() {
+    C.list = compareCandidates(C.x, C.mode);
+    if (!C.list.includes(C.y)) {
+      const i = C.list.indexOf(C.x);
+      C.y = C.list[i + 1] || C.list[i - 1] || null;
+      setPane(PY, C.y);
+    }
+    const bucket = 128;
+    ribbon.replaceChildren(...C.list.map((it) => {
+      const t = h('div', { class: 'gprt-rthumb', title: [it.fileName, fmtDateTime(it)].filter(Boolean).join(' · ') },
+        h('img', { loading: 'lazy', decoding: 'async', alt: '', src: coverUrl(it, bucket) }),
+        h('span', { class: 'gprt-rtag' }));
+      t.addEventListener('click', () => { if (it !== C.x) setY(it); });
+      t.gprtItem = it;
+      return t;
+    }));
+    if (C.list.length < 2) ribbon.append(h('div', { class: 'gprt-empty', style: { padding: '24px' } }, 'No other photos here. Pick another ribbon source.'));
+    markRibbon();
+  }
+
+  function markRibbon() {
+    for (const t of ribbon.children) {
+      const it = t.gprtItem;
+      if (!it) continue;
+      t.classList.toggle('gprt-is-x', it === C.x);
+      t.classList.toggle('gprt-is-y', it === C.y);
+      t.classList.toggle('gprt-is-sel', S.selected.has(it.mediaKey));
+      t.lastChild.textContent = it === C.x ? 'X' : it === C.y ? 'Y' : '';
+      if (it === C.y) t.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+    }
+  }
+
+  function setY(it) {
+    C.y = it;
+    setPane(PY, it);
+    markRibbon();
+  }
+
+  // Move Y through the ribbon, skipping X.
+  function go(d) {
+    const others = C.list.filter((it) => it !== C.x);
+    if (!others.length) return;
+    const i = others.indexOf(C.y);
+    const n = i < 0 ? (d > 0 ? 0 : others.length - 1) : i + d;
+    if (n >= 0 && n < others.length) setY(others[n]);
+  }
+
+  function swap() {
+    if (!C.y) return;
+    [C.x, C.y] = [C.y, C.x];
+    setPane(PX, C.x);
+    setPane(PY, C.y);
+    buildRibbon();
+  }
+
+  function onResize() {
+    panes.forEach((P) => P.it && layout(P));
+    apply();
+  }
+}
+
+function closeCompare() {
+  const C = S.compare;
+  if (!C) return;
+  window.removeEventListener('resize', C.onResize);
+  clearTimeout(C.timer);
+  C.el.remove();
+  S.compare = null;
+  S.viewer?.refreshSel();
+}
+
+// ---------------------------------------------------------------------------
 // Keyboard (captured so Google Photos' own shortcuts don't fire underneath)
 // ---------------------------------------------------------------------------
 
@@ -1118,11 +1407,32 @@ function onKey(e) {
       modal.dispatchEvent(new CustomEvent('gprt-dismiss'));
       modal.remove();
     }
+    else if (S.compare) closeCompare();
     else if (S.viewer) closeViewer();
     else closeApp();
     return;
   }
   if (typing) return;
+  const C = S.compare;
+  if (C) {
+    const compareActions = {
+      ArrowLeft: () => C.go(-1),
+      ArrowRight: () => C.go(1),
+      '+': () => C.zoomBy(1.5),
+      '=': () => C.zoomBy(1.5),
+      '-': () => C.zoomBy(1 / 1.5),
+      0: () => C.fit(),
+      1: () => C.actualSize(),
+      s: () => C.swap(),
+      ' ': () => C.toggleSel(e.shiftKey ? 'x' : 'y'),
+    };
+    const fn = compareActions[e.key];
+    if (fn) {
+      e.preventDefault();
+      fn();
+    }
+    return;
+  }
   const V = S.viewer;
   if (!V) {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
@@ -1141,6 +1451,7 @@ function onKey(e) {
     1: () => V.actualSize(),
     ' ': () => V.toggleSel(),
     x: () => V.toggleSel(),
+    c: () => openCompare(V.idx),
   };
   const fn = actions[e.key];
   if (fn) {

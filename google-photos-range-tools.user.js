@@ -3,7 +3,7 @@
 // @namespace    https://github.com/mangelino/google-photo-editor
 // @author       Massimiliano Angelino
 // @license      MIT-0
-// @version      0.5.5
+// @version      0.6.0
 // @description  Pick Google Photos by date or album, filter by type, group bursts, manage albums, trash, zoom and download originals.
 // @homepageURL  https://github.com/mangelino/light-table-for-google-photos
 // @supportURL   https://github.com/mangelino/light-table-for-google-photos/issues
@@ -40,7 +40,7 @@
 (() => {
   'use strict';
 
-  const STYLES = "/* Light Table styles. All classes are prefixed gprt- to avoid clashing with the page. */\n.gprt-launch { position: fixed; left: 16px; bottom: 16px; z-index: 2147483000; padding: 10px 14px;\n  border: 0; border-radius: 20px; background: #1a73e8; color: #fff; font: 500 14px/1 system-ui, sans-serif;\n  box-shadow: 0 2px 8px rgba(0,0,0,.3); cursor: pointer; }\n.gprt-root { position: fixed; inset: 0; z-index: 2147483001; display: flex; flex-direction: column;\n  background: #121212; color: #e8e8e8; font: 14px/1.4 system-ui, sans-serif; --sz: 200px; }\n.gprt-root * { box-sizing: border-box; }\n.gprt-root button, .gprt-root input, .gprt-root select { font: inherit; color: inherit; }\n.gprt-root button { background: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 6px; padding: 5px 10px; cursor: pointer; }\n.gprt-root button:hover:not(:disabled) { background: #353535; }\n.gprt-root button:disabled { opacity: .45; cursor: default; }\n.gprt-root button.gprt-primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }\n.gprt-root input[type=date], .gprt-root input[type=text], .gprt-root input[type=number], .gprt-root select {\n  background: #1e1e1e; border: 1px solid #3a3a3a; border-radius: 6px; padding: 4px 6px; color-scheme: dark; }\n.gprt-root input[type=date]:focus, .gprt-root input[type=text]:focus, .gprt-root input[type=number]:focus,\n.gprt-root select:focus { outline: none; border-color: #1a73e8; }\n/* Dark checkboxes and sliders, with the app's blue when checked. */\n.gprt-root input[type=checkbox], .gprt-root input[type=range] { color-scheme: dark; accent-color: #1a73e8; }\n.gprt-root input[type=checkbox] { width: 15px; height: 15px; margin: 0; cursor: pointer; }\n.gprt-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; border-bottom: 1px solid #2a2a2a; }\n.gprt-group { display: flex; align-items: center; gap: 6px; }\n.gprt-spacer { flex: 1; }\n.gprt-status { padding: 4px 14px; min-height: 24px; color: #aaa; font-size: 13px; border-bottom: 1px solid #222; }\n.gprt-status.gprt-err { color: #ff8a80; }\n.gprt-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 5px; border: 1px solid #3a3a3a;\n  border-radius: 12px; cursor: pointer; user-select: none; }\n.gprt-chip small { color: #999; }\n.gprt-grid { flex: 1; overflow-y: auto; padding: 8px 14px 40px; }\n.gprt-day { margin-top: 14px; }\n.gprt-dayhead { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; color: #ccc; font-weight: 500; }\n.gprt-dayhead button { padding: 2px 8px; font-size: 12px; }\n.gprt-tiles { display: flex; flex-wrap: wrap; gap: 4px; }\n.gprt-shotgroup { display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 1px solid #3d5a80;\n  border-radius: 6px; background: #18202b; max-width: 100%; }\n.gprt-shotgroup-head { display: flex; align-items: center; gap: 8px; padding: 0 2px; font-size: 12px; color: #9fb7d6; }\n.gprt-shotgroup-head button { padding: 1px 8px; font-size: 12px; }\n.gprt-tile { position: relative; width: var(--sz); height: var(--sz); background: #222; overflow: hidden; cursor: zoom-in; border-radius: 2px; }\n.gprt-fit .gprt-tile { width: calc(var(--sz) * var(--ar)); }\n.gprt-tile img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .12s; }\n.gprt-tile.gprt-sel img { transform: scale(.88); border-radius: 4px; }\n.gprt-tile.gprt-sel { background: #1a3a66; }\n.gprt-check { position: absolute; top: 6px; left: 6px; width: 22px; height: 22px; border-radius: 50%;\n  border: 2px solid #fff; background: rgba(0,0,0,.25); opacity: 0; cursor: pointer; transition: opacity .1s; }\n.gprt-tile:hover .gprt-check, .gprt-has-sel .gprt-check, .gprt-tile.gprt-sel .gprt-check { opacity: 1; }\n.gprt-tile.gprt-sel .gprt-check { background: #1a73e8; border-color: #1a73e8; }\n.gprt-tile.gprt-sel .gprt-check::after { content: ''; position: absolute; left: 5px; top: 1px; width: 6px; height: 11px;\n  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }\n.gprt-badge { position: absolute; right: 6px; bottom: 6px; padding: 1px 5px; border-radius: 3px; background: rgba(0,0,0,.6); font-size: 12px; }\n.gprt-empty { padding: 60px 0; text-align: center; color: #888; }\n.gprt-viewer { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; background: #000; }\n.gprt-viewer .gprt-bar { background: #111; }\n.gprt-stage { position: relative; flex: 1; overflow: hidden; cursor: grab; touch-action: none; }\n.gprt-stage.gprt-drag { cursor: grabbing; }\n.gprt-stage img { position: absolute; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; max-width: none; }\n.gprt-zoom { min-width: 56px; text-align: center; font-variant-numeric: tabular-nums; }\n.gprt-nav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 1; width: 44px; height: 64px;\n  background: rgba(30,30,30,.6) !important; border: 0 !important; font-size: 22px !important; }\n.gprt-modal-bg { position: absolute; inset: 0; z-index: 3; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; }\n.gprt-modal { width: min(480px, 92vw); max-height: 80vh; display: flex; flex-direction: column; gap: 10px;\n  background: #1e1e1e; border: 1px solid #333; border-radius: 10px; padding: 16px; }\n.gprt-modal h3 { margin: 0; font-size: 16px; }\n.gprt-albums { flex: 1; min-height: 120px; overflow-y: auto; border: 1px solid #333; border-radius: 6px; }\n.gprt-album { display: flex; justify-content: space-between; gap: 8px; padding: 7px 10px; cursor: pointer; }\n.gprt-album:hover { background: #2a2a2a; }\n.gprt-album.gprt-picked { background: #1a3a66; }\n.gprt-album small { color: #999; white-space: nowrap; }\n.gprt-row { display: flex; gap: 8px; align-items: center; }\n.gprt-row input[type=text] { flex: 1; }\n";
+  const STYLES = "/* Light Table styles. All classes are prefixed gprt- to avoid clashing with the page. */\n.gprt-launch { position: fixed; left: 16px; bottom: 16px; z-index: 2147483000; padding: 10px 14px;\n  border: 0; border-radius: 20px; background: #1a73e8; color: #fff; font: 500 14px/1 system-ui, sans-serif;\n  box-shadow: 0 2px 8px rgba(0,0,0,.3); cursor: pointer; }\n.gprt-root { position: fixed; inset: 0; z-index: 2147483001; display: flex; flex-direction: column;\n  background: #121212; color: #e8e8e8; font: 14px/1.4 system-ui, sans-serif; --sz: 200px; }\n.gprt-root * { box-sizing: border-box; }\n.gprt-root button, .gprt-root input, .gprt-root select { font: inherit; color: inherit; }\n.gprt-root button { background: #2a2a2a; border: 1px solid #3a3a3a; border-radius: 6px; padding: 5px 10px; cursor: pointer; }\n.gprt-root button:hover:not(:disabled) { background: #353535; }\n.gprt-root button:disabled { opacity: .45; cursor: default; }\n.gprt-root button.gprt-primary { background: #1a73e8; border-color: #1a73e8; color: #fff; }\n.gprt-root input[type=date], .gprt-root input[type=text], .gprt-root input[type=number], .gprt-root select {\n  background: #1e1e1e; border: 1px solid #3a3a3a; border-radius: 6px; padding: 4px 6px; color-scheme: dark; }\n.gprt-root input[type=date]:focus, .gprt-root input[type=text]:focus, .gprt-root input[type=number]:focus,\n.gprt-root select:focus { outline: none; border-color: #1a73e8; }\n/* Dark checkboxes and sliders, with the app's blue when checked. */\n.gprt-root input[type=checkbox], .gprt-root input[type=range] { color-scheme: dark; accent-color: #1a73e8; }\n.gprt-root input[type=checkbox] { width: 15px; height: 15px; margin: 0; cursor: pointer; }\n.gprt-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 10px 14px; border-bottom: 1px solid #2a2a2a; }\n.gprt-group { display: flex; align-items: center; gap: 6px; }\n.gprt-spacer { flex: 1; }\n.gprt-status { padding: 4px 14px; min-height: 24px; color: #aaa; font-size: 13px; border-bottom: 1px solid #222; }\n.gprt-status.gprt-err { color: #ff8a80; }\n.gprt-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 5px; border: 1px solid #3a3a3a;\n  border-radius: 12px; cursor: pointer; user-select: none; }\n.gprt-chip small { color: #999; }\n.gprt-grid { flex: 1; overflow-y: auto; padding: 8px 14px 40px; }\n.gprt-day { margin-top: 14px; }\n.gprt-dayhead { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; color: #ccc; font-weight: 500; }\n.gprt-dayhead button { padding: 2px 8px; font-size: 12px; }\n.gprt-tiles { display: flex; flex-wrap: wrap; gap: 4px; }\n.gprt-shotgroup { display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 1px solid #3d5a80;\n  border-radius: 6px; background: #18202b; max-width: 100%; }\n.gprt-shotgroup-head { display: flex; align-items: center; gap: 8px; padding: 0 2px; font-size: 12px; color: #9fb7d6; }\n.gprt-shotgroup-head button { padding: 1px 8px; font-size: 12px; }\n.gprt-tile { position: relative; width: var(--sz); height: var(--sz); background: #222; overflow: hidden; cursor: zoom-in; border-radius: 2px; }\n.gprt-fit .gprt-tile { width: calc(var(--sz) * var(--ar)); }\n.gprt-tile img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .12s; }\n.gprt-tile.gprt-sel img { transform: scale(.88); border-radius: 4px; }\n.gprt-tile.gprt-sel { background: #1a3a66; }\n.gprt-check { position: absolute; top: 6px; left: 6px; width: 22px; height: 22px; border-radius: 50%;\n  border: 2px solid #fff; background: rgba(0,0,0,.25); opacity: 0; cursor: pointer; transition: opacity .1s; }\n.gprt-tile:hover .gprt-check, .gprt-has-sel .gprt-check, .gprt-tile.gprt-sel .gprt-check { opacity: 1; }\n.gprt-tile.gprt-sel .gprt-check { background: #1a73e8; border-color: #1a73e8; }\n.gprt-tile.gprt-sel .gprt-check::after { content: ''; position: absolute; left: 5px; top: 1px; width: 6px; height: 11px;\n  border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }\n.gprt-badge { position: absolute; right: 6px; bottom: 6px; padding: 1px 5px; border-radius: 3px; background: rgba(0,0,0,.6); font-size: 12px; }\n.gprt-empty { padding: 60px 0; text-align: center; color: #888; }\n.gprt-viewer { position: absolute; inset: 0; z-index: 2; display: flex; flex-direction: column; background: #000; }\n.gprt-viewer .gprt-bar { background: #111; }\n.gprt-stage { position: relative; flex: 1; overflow: hidden; cursor: grab; touch-action: none; }\n.gprt-stage.gprt-drag { cursor: grabbing; }\n.gprt-stage img { position: absolute; transform-origin: 0 0; user-select: none; -webkit-user-drag: none; max-width: none; }\n.gprt-compare { z-index: 3; }\n.gprt-panes { flex: 1; display: flex; gap: 2px; min-height: 0; }\n.gprt-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; }\n.gprt-pane-head { display: flex; align-items: center; gap: 8px; padding: 4px 10px; background: #111; font-size: 13px; color: #ccc; }\n.gprt-pane-info { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }\n.gprt-pane-head button { padding: 2px 8px; font-size: 12px; }\n.gprt-pane-label { position: absolute; top: 8px; left: 8px; z-index: 1; padding: 1px 8px; border-radius: 4px;\n  font-weight: 600; color: #000; pointer-events: none; }\n.gprt-pane-x { background: #f9ab00; }\n.gprt-pane-y { background: #8ab4f8; }\n.gprt-ribbon { flex: none; display: flex; align-items: center; gap: 4px; height: 100px; padding: 6px 8px; overflow-x: auto;\n  background: #111; border-top: 1px solid #2a2a2a; }\n.gprt-rthumb { position: relative; flex: none; width: 84px; height: 84px; border: 3px solid transparent; border-radius: 4px;\n  overflow: hidden; background: #222; cursor: pointer; }\n.gprt-rthumb img { width: 100%; height: 100%; object-fit: cover; display: block; }\n.gprt-rthumb.gprt-is-x { border-color: #f9ab00; cursor: default; }\n.gprt-rthumb.gprt-is-y { border-color: #8ab4f8; }\n.gprt-rtag { position: absolute; left: 3px; top: 3px; padding: 0 5px; border-radius: 3px; font-size: 11px; font-weight: 600; color: #000; }\n.gprt-rtag:empty { display: none; }\n.gprt-is-x .gprt-rtag { background: #f9ab00; }\n.gprt-is-y .gprt-rtag { background: #8ab4f8; }\n.gprt-rthumb.gprt-is-sel::after { content: '✓'; position: absolute; right: 3px; bottom: 3px; width: 16px; height: 16px; border-radius: 50%;\n  background: #1a73e8; color: #fff; font-size: 11px; line-height: 16px; text-align: center; }\n.gprt-zoom { min-width: 56px; text-align: center; font-variant-numeric: tabular-nums; }\n.gprt-nav { position: absolute; top: 50%; transform: translateY(-50%); z-index: 1; width: 44px; height: 64px;\n  background: rgba(30,30,30,.6) !important; border: 0 !important; font-size: 22px !important; }\n.gprt-modal-bg { position: absolute; inset: 0; z-index: 5; background: rgba(0,0,0,.6); display: flex; align-items: center; justify-content: center; }\n.gprt-modal { width: min(480px, 92vw); max-height: 80vh; display: flex; flex-direction: column; gap: 10px;\n  background: #1e1e1e; border: 1px solid #333; border-radius: 10px; padding: 16px; }\n.gprt-modal h3 { margin: 0; font-size: 16px; }\n.gprt-albums { flex: 1; min-height: 120px; overflow-y: auto; border: 1px solid #333; border-radius: 6px; }\n.gprt-album { display: flex; justify-content: space-between; gap: 8px; padding: 7px 10px; cursor: pointer; }\n.gprt-album:hover { background: #2a2a2a; }\n.gprt-album.gprt-picked { background: #1a3a66; }\n.gprt-album small { color: #999; white-space: nowrap; }\n.gprt-row { display: flex; gap: 8px; align-items: center; }\n.gprt-row input[type=text] { flex: 1; }\n";
 
   // Tampermonkey adapter. STYLES is injected by the build.
 
@@ -449,7 +449,7 @@
   };
 
   let root, grid, statusEl, selCountEl, btnAlbum, btnDownload, btnCancel, btnLoad, inFrom, inTo, inSource, filterBar, extChips;
-  let btnOpenAlbum, btnRemove, btnTrash, groupCountEl;
+  let btnOpenAlbum, btnRemove, btnTrash, btnCompare, groupCountEl;
 
   const UNKNOWN_EXT = '(unknown)';
   function extOf(it) {
@@ -536,6 +536,10 @@
     btnOpenAlbum = h('button', { onclick: onOpenAlbum, title: 'Load the contents of an album instead of a date range' }, 'Open album…');
     btnRemove = h('button', { onclick: removeSelectedFromAlbum, style: { display: 'none' } }, 'Remove from album');
     btnTrash = h('button', { onclick: trashSelected, style: { color: '#ff8a80' } }, 'Move to trash');
+    btnCompare = h('button', {
+      title: 'Compare the first selected photo with the others side by side',
+      onclick: () => openCompare(S.items.findIndex((it) => S.selected.has(it.mediaKey))),
+    }, 'Compare');
 
     const sizeLabel = h('span', { class: 'gprt-zoom' }, `${S.size}px`);
     const sizeSlider = h('input', {
@@ -599,7 +603,7 @@
         h('div', { class: 'gprt-group' },
           h('button', { onclick: () => selectAll(true) }, 'Select all'),
           h('button', { onclick: () => selectAll(false) }, 'Clear'),
-          selCountEl, btnAlbum, btnDownload, btnRemove, btnTrash),
+          selCountEl, btnCompare, btnAlbum, btnDownload, btnRemove, btnTrash),
         h('div', { class: 'gprt-spacer' }),
         h('button', { onclick: closeApp, title: 'Close (Esc)' }, '✕')),
       filterBar,
@@ -616,6 +620,7 @@
   }
 
   function closeApp() {
+    if (S.compare) closeCompare();
     if (S.viewer) closeViewer();
     root?.remove();
     window.removeEventListener('keydown', onKey, true);
@@ -791,6 +796,7 @@
     btnAlbum.disabled = n === 0 || !!S.task;
     btnDownload.disabled = n === 0 || !!S.task;
     btnTrash.disabled = n === 0 || !!S.task;
+    btnCompare.disabled = n === 0 || !!S.task;
     btnRemove.disabled = n === 0 || !!S.task;
     btnRemove.style.display = S.source?.type === 'album' ? '' : 'none';
     btnOpenAlbum.disabled = !!S.task;
@@ -1030,6 +1036,7 @@
           h('button', { onclick: () => fit(), title: 'Fit (0)' }, 'Fit'),
           h('button', { onclick: () => actualSize(), title: 'Actual pixels (1)' }, '100%')),
         selBtn,
+        h('button', { onclick: () => openCompare(V.idx), title: 'Compare this photo side by side with others (C)' }, 'Compare'),
         h('button', { onclick: () => downloadItem(S.items[V.idx]).catch((e) => setStatus(e.message, true)) }, 'Download'),
         openLink,
         h('button', { onclick: closeViewer, title: 'Close (Esc)' }, '✕')),
@@ -1039,7 +1046,7 @@
       h('button', { class: 'gprt-nav', style: { right: '8px' }, onclick: () => go(1) }, '›'));
     root.append(el);
 
-    const V = { el, idx, z: 1, tx: 0, ty: 0, baseW: 0, baseH: 0, left: 0, top: 0, loadedW: 0, timer: 0, go, zoomBy, fit, actualSize, toggleSel: () => selBtn.click() };
+    const V = { el, idx, z: 1, tx: 0, ty: 0, baseW: 0, baseH: 0, left: 0, top: 0, loadedW: 0, timer: 0, go, zoomBy, fit, actualSize, toggleSel: () => selBtn.click(), refreshSel: () => syncSel() };
     S.viewer = V;
 
     function item() {
@@ -1200,6 +1207,288 @@
   }
 
   // ---------------------------------------------------------------------------
+  // X|Y comparison: X stays fixed on the left, Y is picked from a ribbon below.
+  // Both panes share one zoom level and one pan position (in image coordinates),
+  // so the same detail is shown side by side.
+  // ---------------------------------------------------------------------------
+
+  function compareCandidates(x, mode) {
+    if (mode === 'selected') return S.items.filter((it) => it === x || S.selected.has(it.mediaKey));
+    if (mode === 'group') return groupShots(S.items, S.groupGapSec * 1000).find((g) => g.includes(x)) || [x];
+    return S.items;
+  }
+
+  function defaultCompareMode(x) {
+    if (S.selected.size >= 2 && compareCandidates(x, 'selected').length >= 2) return 'selected';
+    if (compareCandidates(x, 'group').length >= 2) return 'group';
+    return 'all';
+  }
+
+  function openCompare(xIdx) {
+    const x0 = S.items[xIdx];
+    if (!x0) return;
+    const C = { x: x0, y: null, mode: defaultCompareMode(x0), list: [], z: 1, cu: 0.5, cv: 0.5, timer: 0 };
+
+    const zoomLabel = h('span', { class: 'gprt-zoom' });
+    const modeSel = h('select', { title: 'Which photos the ribbon offers for Y', onchange: (e) => { C.mode = e.target.value; buildRibbon(); } },
+      h('option', { value: 'group' }, `Same burst (≤${S.groupGapSec}s)`),
+      h('option', { value: 'selected' }, 'Selected photos'),
+      h('option', { value: 'all' }, 'All shown photos'));
+    modeSel.value = C.mode;
+    const ribbon = h('div', { class: 'gprt-ribbon' });
+    const panes = [makePane('X'), makePane('Y')];
+    const [PX, PY] = panes;
+
+    const el = h('div', { class: 'gprt-viewer gprt-compare' },
+      h('div', { class: 'gprt-bar' },
+        h('strong', {}, 'Compare'),
+        h('div', { class: 'gprt-group' }, 'Ribbon', modeSel),
+        h('div', { class: 'gprt-spacer' }),
+        h('div', { class: 'gprt-group' },
+          h('button', { onclick: () => zoomBy(1 / 1.5), title: 'Zoom out (-)' }, '−'),
+          zoomLabel,
+          h('button', { onclick: () => zoomBy(1.5), title: 'Zoom in (+)' }, '+'),
+          h('button', { onclick: () => fit(), title: 'Fit (0)' }, 'Fit'),
+          h('button', { onclick: () => actualSize(), title: 'Actual pixels of X (1)' }, '100%')),
+        h('button', { onclick: () => swap(), title: 'Make Y the fixed photo (S)' }, '⇄ Swap'),
+        h('button', { onclick: closeCompare, title: 'Close (Esc)' }, '✕')),
+      h('div', { class: 'gprt-panes' }, PX.el, PY.el),
+      ribbon);
+    root.append(el);
+    S.compare = Object.assign(C, { el, go, swap, zoomBy, fit, actualSize, onResize, toggleSel: (which) => toggleSel(which === 'x' ? PX : PY) });
+    window.addEventListener('resize', onResize);
+
+    setPane(PX, C.x);
+    buildRibbon();
+
+    function makePane(label) {
+      const img = h('img', { alt: '', draggable: 'false' });
+      const info = h('span', { class: 'gprt-pane-info' });
+      const sel = h('button', { onclick: () => { toggleSel(P); } });
+      const stage = h('div', { class: 'gprt-stage' }, img, h('div', { class: `gprt-pane-label gprt-pane-${label.toLowerCase()}` }, label));
+      const P = { label, el: null, img, info, sel, stage, it: null, loadedW: 0, baseW: 1, baseH: 1, left: 0, top: 0, W: 1, H: 1 };
+      P.el = h('div', { class: 'gprt-pane' }, h('div', { class: 'gprt-pane-head' }, info, sel), stage);
+
+      stage.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        if (!P.it) return;
+        const r = stage.getBoundingClientRect();
+        zoomAt(P, C.z * Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top);
+      }, { passive: false });
+      stage.addEventListener('dblclick', (e) => {
+        if (e.target !== img) return;
+        const r = stage.getBoundingClientRect();
+        if (C.z > 1.01) fit();
+        else zoomAt(P, Math.max(P.it.width ? P.it.width / P.baseW : 2, 2), e.clientX - r.left, e.clientY - r.top);
+      });
+      let drag = null;
+      stage.addEventListener('pointerdown', (e) => {
+        if (!P.it) return;
+        drag = { x: e.clientX, y: e.clientY, cu: C.cu, cv: C.cv };
+        stage.setPointerCapture?.(e.pointerId);
+        stage.classList.add('gprt-drag');
+      });
+      stage.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        C.cu = drag.cu - (e.clientX - drag.x) / (C.z * P.baseW);
+        C.cv = drag.cv - (e.clientY - drag.y) / (C.z * P.baseH);
+        apply();
+      });
+      const endDrag = () => { drag = null; stage.classList.remove('gprt-drag'); };
+      stage.addEventListener('pointerup', endDrag);
+      stage.addEventListener('pointercancel', endDrag);
+      return P;
+    }
+
+    function setPane(P, it) {
+      P.it = it;
+      P.loadedW = 0;
+      if (!it) {
+        P.img.removeAttribute('src');
+        P.img.style.display = 'none';
+        P.info.textContent = 'Pick a photo from the ribbon below';
+        P.sel.style.display = 'none';
+        return;
+      }
+      const tile = grid.querySelector(`[data-idx="${S.items.indexOf(it)}"] img`);
+      P.img.src = tile?.currentSrc || coverUrl(it, 256);
+      P.img.style.display = '';
+      P.info.textContent = `${it.fileName ? `${it.fileName} · ` : ''}${fmtDateTime(it)} · ${it.width}×${it.height}`;
+      P.info.title = P.info.textContent;
+      P.sel.style.display = '';
+      syncSel(P);
+      layout(P);
+      apply();
+    }
+
+    function syncSel(P) {
+      if (P.it) P.sel.textContent = S.selected.has(P.it.mediaKey) ? '✓ Selected' : 'Select';
+    }
+
+    function toggleSel(P) {
+      if (!P.it) return;
+      toggleItem(S.items.indexOf(P.it));
+      syncSel(P);
+      markRibbon();
+    }
+
+    function layout(P) {
+      const r = P.stage.getBoundingClientRect();
+      const ar = aspect(P.it);
+      P.W = r.width || 1;
+      P.H = r.height || 1;
+      P.baseW = Math.min(P.W, P.H * ar) || 1;
+      P.baseH = P.baseW / ar;
+      P.left = (P.W - P.baseW) / 2;
+      P.top = (P.H - P.baseH) / 2;
+    }
+
+    // Keep the shared centre inside X's image so you can't pan into empty space.
+    function clampCenter() {
+      const hw = PX.W / (2 * C.z * PX.baseW);
+      const hh = PX.H / (2 * C.z * PX.baseH);
+      C.cu = hw >= 0.5 ? 0.5 : Math.min(1 - hw, Math.max(hw, C.cu));
+      C.cv = hh >= 0.5 ? 0.5 : Math.min(1 - hh, Math.max(hh, C.cv));
+    }
+
+    function translate(P) {
+      return [P.W / 2 - P.left - C.z * C.cu * P.baseW, P.H / 2 - P.top - C.z * C.cv * P.baseH];
+    }
+
+    function apply() {
+      clampCenter();
+      for (const P of panes) {
+        if (!P.it) continue;
+        const [tx, ty] = translate(P);
+        Object.assign(P.img.style, {
+          width: `${P.baseW}px`, height: `${P.baseH}px`, left: `${P.left}px`, top: `${P.top}px`,
+          transform: `translate(${tx}px, ${ty}px) scale(${C.z})`,
+        });
+      }
+      zoomLabel.textContent = C.x.width ? `${Math.round((PX.baseW * C.z * 100) / C.x.width)}%` : `${C.z.toFixed(1)}×`;
+      clearTimeout(C.timer);
+      C.timer = setTimeout(() => panes.forEach(upgrade), 120);
+    }
+
+    function upgrade(P) {
+      const it = P.it;
+      if (!it) return;
+      const need = Math.ceil(P.baseW * C.z * (window.devicePixelRatio || 1));
+      const step = Math.ceil(need / 256) * 256;
+      const target = it.width ? Math.min(step, it.width) : step;
+      if (target <= P.loadedW) return;
+      const hi = new Image();
+      hi.onload = () => {
+        if (S.compare !== C || P.it !== it) return;
+        P.img.src = hi.src;
+        P.loadedW = Math.max(P.loadedW, target);
+      };
+      hi.src = widthUrl(it, target);
+    }
+
+    function maxZoom() {
+      return Math.max(8, C.x.width ? (C.x.width / PX.baseW) * 4 : 8);
+    }
+
+    // Zoom keeping the image point under (sx, sy) of pane P in place.
+    function zoomAt(P, z2, sx, sy) {
+      z2 = Math.max(1, Math.min(maxZoom(), z2));
+      const [tx, ty] = translate(P);
+      const ux = (sx - P.left - tx) / (C.z * P.baseW);
+      const uy = (sy - P.top - ty) / (C.z * P.baseH);
+      C.z = z2;
+      C.cu = ux - (sx - P.W / 2) / (z2 * P.baseW);
+      C.cv = uy - (sy - P.H / 2) / (z2 * P.baseH);
+      apply();
+    }
+
+    function zoomBy(f) {
+      zoomAt(PX, C.z * f, PX.W / 2, PX.H / 2);
+    }
+
+    function fit() {
+      C.z = 1;
+      C.cu = 0.5;
+      C.cv = 0.5;
+      apply();
+    }
+
+    function actualSize() {
+      if (C.x.width) zoomAt(PX, C.x.width / PX.baseW, PX.W / 2, PX.H / 2);
+    }
+
+    function buildRibbon() {
+      C.list = compareCandidates(C.x, C.mode);
+      if (!C.list.includes(C.y)) {
+        const i = C.list.indexOf(C.x);
+        C.y = C.list[i + 1] || C.list[i - 1] || null;
+        setPane(PY, C.y);
+      }
+      const bucket = 128;
+      ribbon.replaceChildren(...C.list.map((it) => {
+        const t = h('div', { class: 'gprt-rthumb', title: [it.fileName, fmtDateTime(it)].filter(Boolean).join(' · ') },
+          h('img', { loading: 'lazy', decoding: 'async', alt: '', src: coverUrl(it, bucket) }),
+          h('span', { class: 'gprt-rtag' }));
+        t.addEventListener('click', () => { if (it !== C.x) setY(it); });
+        t.gprtItem = it;
+        return t;
+      }));
+      if (C.list.length < 2) ribbon.append(h('div', { class: 'gprt-empty', style: { padding: '24px' } }, 'No other photos here. Pick another ribbon source.'));
+      markRibbon();
+    }
+
+    function markRibbon() {
+      for (const t of ribbon.children) {
+        const it = t.gprtItem;
+        if (!it) continue;
+        t.classList.toggle('gprt-is-x', it === C.x);
+        t.classList.toggle('gprt-is-y', it === C.y);
+        t.classList.toggle('gprt-is-sel', S.selected.has(it.mediaKey));
+        t.lastChild.textContent = it === C.x ? 'X' : it === C.y ? 'Y' : '';
+        if (it === C.y) t.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+      }
+    }
+
+    function setY(it) {
+      C.y = it;
+      setPane(PY, it);
+      markRibbon();
+    }
+
+    // Move Y through the ribbon, skipping X.
+    function go(d) {
+      const others = C.list.filter((it) => it !== C.x);
+      if (!others.length) return;
+      const i = others.indexOf(C.y);
+      const n = i < 0 ? (d > 0 ? 0 : others.length - 1) : i + d;
+      if (n >= 0 && n < others.length) setY(others[n]);
+    }
+
+    function swap() {
+      if (!C.y) return;
+      [C.x, C.y] = [C.y, C.x];
+      setPane(PX, C.x);
+      setPane(PY, C.y);
+      buildRibbon();
+    }
+
+    function onResize() {
+      panes.forEach((P) => P.it && layout(P));
+      apply();
+    }
+  }
+
+  function closeCompare() {
+    const C = S.compare;
+    if (!C) return;
+    window.removeEventListener('resize', C.onResize);
+    clearTimeout(C.timer);
+    C.el.remove();
+    S.compare = null;
+    S.viewer?.refreshSel();
+  }
+
+  // ---------------------------------------------------------------------------
   // Keyboard (captured so Google Photos' own shortcuts don't fire underneath)
   // ---------------------------------------------------------------------------
 
@@ -1214,11 +1503,32 @@
         modal.dispatchEvent(new CustomEvent('gprt-dismiss'));
         modal.remove();
       }
+      else if (S.compare) closeCompare();
       else if (S.viewer) closeViewer();
       else closeApp();
       return;
     }
     if (typing) return;
+    const C = S.compare;
+    if (C) {
+      const compareActions = {
+        ArrowLeft: () => C.go(-1),
+        ArrowRight: () => C.go(1),
+        '+': () => C.zoomBy(1.5),
+        '=': () => C.zoomBy(1.5),
+        '-': () => C.zoomBy(1 / 1.5),
+        0: () => C.fit(),
+        1: () => C.actualSize(),
+        s: () => C.swap(),
+        ' ': () => C.toggleSel(e.shiftKey ? 'x' : 'y'),
+      };
+      const fn = compareActions[e.key];
+      if (fn) {
+        e.preventDefault();
+        fn();
+      }
+      return;
+    }
     const V = S.viewer;
     if (!V) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
@@ -1237,6 +1547,7 @@
       1: () => V.actualSize(),
       ' ': () => V.toggleSel(),
       x: () => V.toggleSel(),
+      c: () => openCompare(V.idx),
     };
     const fn = actions[e.key];
     if (fn) {

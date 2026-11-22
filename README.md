@@ -5,6 +5,7 @@ A Tampermonkey userscript that adds a full-screen tool to photos.google.com:
 - Load photos and videos taken within a date range (Library, Archive, or both)
 - Filter what you loaded by type (photos or videos) and by file extension (JPG, HEIC, PNG, MP4, …)
 - Group shots taken within N seconds of each other (bursts, retakes) and optionally show only those groups
+- Compare two photos side by side (X|Y) with linked zoom and pan; X stays fixed, Y is picked from a ribbon
 - Select them one by one, by shift-click range, by day, or all at once
 - Add the selection to an existing album (own or shared) or to a new one
 - Open an album to browse its contents, then remove selected items from it or move them to the trash
@@ -77,11 +78,23 @@ To release: bump `version` in `package.json` (it feeds the userscript `@version`
 | Viewer | Pan | Drag |
 | Viewer | Previous / next | `←` / `→` |
 | Viewer | Toggle selection | `Space` or `x` |
+| Viewer | Open X\|Y compare | `C`, or **Compare** |
+| Grid   | Compare the selection | **Compare** (first selected photo is X) |
+| Compare | Next / previous Y | `→` / `←`, or click a ribbon thumbnail |
+| Compare | Zoom / pan both sides | Mouse wheel, `+` / `-`, drag, double-click; `0` fit, `1` 100% of X |
+| Compare | Select Y / select X | `Space` / `Shift+Space`, or the pane's **Select** button |
+| Compare | Swap X and Y | `S`, or **⇄ Swap** |
 | Any    | Close | `Esc` |
 
 **Group shots** (filter bar) boxes together consecutive shots taken at most the chosen number of seconds apart
 (default 3 s, up to 3600). Each group shows its shot count, time and span, plus a **Select** button. A typical burst
 cleanup: tick **Only groups**, open the shots in the viewer to compare, select the ones you don't want, **Move to trash**.
+
+**Compare** shows X (fixed, left) and Y (right) at the same zoom and on the same spot, so you can check sharpness
+or expressions across a burst. The ribbon offers **Same burst** (shots within the *Group shots* gap of X),
+**Selected photos**, or **All shown photos**; it starts with the selection if you selected several, otherwise
+with X's burst. Typical use: select the keeper as X, step through Y with `→`, press `Space` on the rejects,
+then close and **Move to trash**.
 
 **Remove from album** (shown only when an album is open) takes the items out of that album; they stay in your library.
 **Move to trash** deletes the items from your library and from every album they are in. You can restore them from
