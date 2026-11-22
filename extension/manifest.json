@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Light Table for Google Photos",
   "short_name": "Light Table",
-  "version": "0.5.3",
+  "version": "0.5.4",
   "description": "Pick Google Photos by date or album, filter by type, group bursts, manage albums, trash, zoom and download originals.",
   "homepage_url": "https://github.com/mangelino/light-table-for-google-photos",
   "icons": {
