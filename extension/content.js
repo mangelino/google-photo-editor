@@ -206,17 +206,28 @@
     return [...items.values()].sort((a, b) => b.timestamp - a.timestamp);
   }
 
-  async function removeFromAlbum(items, album, onProgress) {
+  // Resolves with the items that were actually removed.
+  async function removeFromAlbum(items, album, onProgress, signal) {
+    if (album.shared) {
+      // LjmOue rejects requests carrying several items (empty payload) but accepts
+      // one item at a time, so send one request per item, a few in parallel.
+      const filler = [[null, null, null, [null, [], []], null, null, null, null, null, null, null, null, null, []]];
+      const removed = [];
+      const errors = await runPool(items, 3, async (it) => {
+        await rpc('LjmOue', [[album.mediaKey], [[it.mediaKey]], filler]);
+        removed.push(it);
+        onProgress(removed.length, items.length);
+      }, signal);
+      if (errors.length) console.warn('[gprt] shared album removal errors', errors);
+      return removed;
+    }
     const CHUNK = 250;
     for (let i = 0; i < items.length; i += CHUNK) {
-      const keys = items.slice(i, i + CHUNK).map((it) => it.mediaKey);
-      if (album.shared) {
-        await rpc('LjmOue', [[album.mediaKey], [keys], [[null, null, null, [null, [], []], null, null, null, null, null, null, null, null, null, []]]]);
-      } else {
-        await rpc('ycV3Nd', [keys]);
-      }
+      if (signal.aborted) return items.slice(0, i);
+      await rpc('ycV3Nd', [items.slice(i, i + CHUNK).map((it) => it.mediaKey)]);
       onProgress(Math.min(i + CHUNK, items.length), items.length);
     }
+    return items;
   }
 
   // Moves items to Google Photos' trash (restorable there for 60 days).
@@ -860,9 +871,15 @@
     const ctrl = new AbortController();
     setBusy(ctrl);
     try {
-      await action((done, total) => setStatus(`${verb}… ${done}/${total}`));
-      dropFromView(items);
+      // An action may resolve with the subset it completed (partial failure or Cancel).
+      const done = (await action((n, total) => setStatus(`${verb}… ${n}/${total}`), ctrl.signal)) || items;
+      dropFromView(done);
       S.albums = null; // album counts changed
+      if (done.length < items.length) {
+        const why = ctrl.signal.aborted ? 'cancelled' : 'failed (details in console)';
+        setStatus(`${verb}: ${done.length} of ${items.length} done, the rest ${why}. They are still selected.`, true);
+        return false;
+      }
       return true;
     } catch (e) {
       setStatus(`${verb} failed: ${e.message}. Reload the album to see its current state.`, true);
@@ -877,7 +894,7 @@
     const items = selectedItems();
     if (!album || !items.length) return;
     if (!confirm(`Remove ${items.length} item${items.length === 1 ? '' : 's'} from "${album.title}"?\n\nThe photos stay in your library.`)) return;
-    if (await runAction(items, 'Removing from album', (p) => removeFromAlbum(items, album, p))) {
+    if (await runAction(items, 'Removing from album', (p, signal) => removeFromAlbum(items, album, p, signal))) {
       setStatus(`Removed ${items.length} items from "${album.title}". ${S.all.length} left.`);
     }
   }
