@@ -89,3 +89,59 @@
 .gprt-album small { color: #999; white-space: nowrap; }
 .gprt-row { display: flex; gap: 8px; align-items: center; }
 .gprt-row input[type=text] { flex: 1; }
+
+/* Light Table layout and contact sheet. */
+.gprt-launch { left: auto; right: 16px; background: #c6b5ff; color: #211638; }
+.gprt-root { --accent: #c6b5ff; --line: #303036; --panel: #1a1a1e; background: #131316; color: #f0edf5; }
+.gprt-root:focus, .gprt-viewer:focus { outline: none; }
+.gprt-root button { background: #25242a; border-color: var(--line); }
+.gprt-root button:hover:not(:disabled) { border-color: var(--accent); }
+.gprt-root button.gprt-primary, .gprt-tabs button[aria-pressed=true] { background: var(--accent); color: #211638; border-color: transparent; }
+.gprt-root button.gprt-primary:hover:not(:disabled),
+.gprt-root .gprt-tabs button[aria-pressed=true]:hover:not(:disabled) {
+  background: #dbceff; color: #211638; border-color: transparent;
+}
+.gprt-root input[type=checkbox], .gprt-root input[type=range] { accent-color: var(--accent); }
+.gprt-root [hidden] { display: none !important; }
+.gprt-top, .gprt-gallery-head, .gprt-actions { display: flex; align-items: center; gap: 10px; padding: 12px 24px; }
+.gprt-top, .gprt-gallery-head { justify-content: space-between; border-bottom: 1px solid var(--line); }
+.gprt-top strong { font-size: 17px; }
+.gprt-top strong span { color: var(--accent); margin-right: 10px; }
+.gprt-shell { display: grid; grid-template-columns: 220px minmax(0, 1fr); flex: 1; min-height: 0; }
+.gprt-sidebar { padding: 20px 16px; overflow: auto; background: var(--panel); border-right: 1px solid var(--line); }
+.gprt-sidebar h2 { font-size: 12px; color: #b5aeba; text-transform: uppercase; letter-spacing: .13em; margin: 0 0 10px; }
+.gprt-sidebar h2:not(:first-child) { border-top: 1px solid var(--line); margin-top: 20px; padding-top: 20px; }
+.gprt-tabs { display: flex; gap: 4px; margin-bottom: 12px; }
+.gprt-tabs button { flex: 1; }
+.gprt-source-fields, .gprt-source-fields label { display: grid; gap: 6px; }
+.gprt-sidebar .gprt-bar { flex-direction: column; align-items: stretch; padding: 0; border: 0; }
+.gprt-sidebar .gprt-group { flex-wrap: wrap; }
+.gprt-gallery { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.gprt-gallery-head h1 { font-size: 24px; margin: 0; line-height: 1.2; }
+.gprt-gallery-head input { width: clamp(56px, 10vw, 120px); }
+.gprt-muted { color: #b5aeba; }
+.gprt-status:empty { display: none; }
+.gprt-grid { min-height: 0; padding: 4px 24px 16px; scrollbar-gutter: stable; }
+.gprt-grid-surface { position: relative; overflow-anchor: none; }
+.gprt-window-row { position: absolute; left: 0; right: 0; display: flex; gap: 4px; }
+.gprt-row-label { align-items: center; gap: 9px; }
+.gprt-row-label small { color: #b5aeba; }
+.gprt-row-label button { margin-left: auto; padding-block: 2px; }
+.gprt-root button.gprt-tile { flex: none; padding: 0; border: 0; border-radius: 0; height: 100%; }
+.gprt-root .gprt-tile img { transform: none; border-radius: 0; }
+.gprt-tile .gprt-check { opacity: 1; }
+.gprt-tile.gprt-sel .gprt-check { background: var(--accent); border-color: var(--accent); }
+.gprt-tile.gprt-sel .gprt-check::after { border-color: #211638; }
+.gprt-actions { flex-wrap: wrap; background: var(--panel); border-top: 1px solid var(--line); }
+.gprt-ribbon { display: block; overflow-y: hidden; }
+.gprt-ribbon-track { height: 76px; position: relative; }
+.gprt-ribbon-empty { position: absolute; left: 84px; top: 24px; white-space: nowrap; }
+.gprt-root button.gprt-rthumb { position: absolute; padding: 0; width: 76px; height: 76px; border: 0; border-radius: 0; }
+.gprt-rthumb.gprt-is-x, .gprt-rthumb.gprt-is-y { outline: 2px solid var(--accent); outline-offset: -2px; }
+.gprt-rthumb.gprt-is-sel::after { background: var(--accent); color: #211638; }
+@media (max-width: 680px) {
+  .gprt-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  .gprt-sidebar { max-height: 28vh; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  .gprt-gallery-head, .gprt-actions, .gprt-top { padding-inline: 12px; }
+  .gprt-grid { padding-inline: 12px; }
+}

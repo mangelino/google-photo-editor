@@ -9,7 +9,7 @@ A Tampermonkey userscript that adds a full-screen tool to photos.google.com:
 - Select them one by one, by shift-click range, by day, or all at once
 - Add the selection to an existing album (own or shared) or to a new one
 - Open an album to browse its contents, then remove selected items from it or move them to the trash
-- Browse the grid at any tile size (64–600 px), square-cropped or original aspect ratio
+- Browse a borderless, square photo grid with adjustable tiles (64–600 px)
 - Open a viewer with zoom (wheel, buttons, keys) and pan; it loads higher resolutions as you zoom in
 - Download originals of the selection, using the original filenames
 
@@ -21,7 +21,7 @@ Two equivalent builds of the same code. Use one, not both, or you'll get two lau
 
 1. Install [Tampermonkey](https://www.tampermonkey.net/).
 2. Open [the raw script](https://raw.githubusercontent.com/mangelino/light-table-for-google-photos/main/light-table-for-google-photos.user.js) and click **Install** in the Tampermonkey page that appears.
-3. Open <https://photos.google.com>. Click **Light Table** in the bottom-left corner
+3. Open <https://photos.google.com>. Click **Light Table** in the bottom-right corner
    (or use the Tampermonkey menu → *Open Light Table*).
 
 On Chrome, Tampermonkey needs "Allow User Scripts" enabled in the extension's details page.
@@ -31,11 +31,10 @@ Tampermonkey checks for a new version every 24 hours by default. To check right 
 
 ### Option B: Chrome extension (unpacked)
 
-1. Download `light-table-extension-<version>.zip` from the [latest release](https://github.com/mangelino/light-table-for-google-photos/releases/latest)
-   and unzip it into a folder you'll keep (Chrome loads the extension from there).
+1. Download this repository as a ZIP or clone it, then locate the included `extension/` folder.
 2. Open `chrome://extensions` (or `edge://extensions`), turn on **Developer mode** (top right), click
-   **Load unpacked**, and pick the unzipped folder. (From a clone of this repo, pick `extension/`.)
-3. Open <https://photos.google.com> and click **Light Table** in the bottom-left corner or the extension's toolbar icon.
+   **Load unpacked**, and pick the `extension/` folder.
+3. Open <https://photos.google.com> and click **Light Table** in the bottom-right corner or the extension's toolbar icon.
 
 Unpacked extensions don't update themselves: download the new zip, replace the folder's contents, and click the
 reload icon on the extension's card.
@@ -47,7 +46,8 @@ All code lives in `src/`; `npm run build` generates both builds (Node 18+, no de
 
 | File | Purpose |
 |------|---------|
-| `src/core.js` | The app: RPC layer, UI, viewer (shared) |
+| `src/shared.js` | Google Photos RPCs, media URLs, and shared helpers |
+| `src/core.js` | Gallery, selection, viewer, and Compare |
 | `src/styles.css` | Styles (shared) |
 | `src/platform.userscript.js` | Tampermonkey adapter: `GM_*` calls for styles, downloads, menu |
 | `src/platform.extension.js` | Extension content-script adapter: messages the background worker |
@@ -77,26 +77,27 @@ To release: bump `version` in `package.json` (it feeds the userscript `@version`
 | Viewer | Fit / actual pixels | `0` / `1`, or the **Fit** / **100%** buttons |
 | Viewer | Pan | Drag |
 | Viewer | Previous / next | `←` / `→` |
-| Viewer | Toggle selection | `Space` or `x` |
+| Viewer | Toggle selection | `Space` or `X` |
+| Viewer | Select and advance | `Enter` |
 | Viewer | Open X\|Y compare | `C`, or **Compare** |
 | Grid   | Compare the selection | **Compare** (first selected photo is X) |
 | Compare | Next / previous Y | `→` / `←`, or click a ribbon thumbnail |
 | Compare | Zoom / pan both sides | Mouse wheel, `+` / `-`, drag, double-click; `0` fit, `1` 100% of X |
-| Compare | Select Y / select X | `Space` / `Shift+Space`, or the pane's **Select** button |
+| Compare | Toggle selection for X / Y | `X` / `Y`, or the pane's **Select** button |
 | Compare | Swap X and Y | `S`, or **⇄ Swap** |
 | Any    | Close | `Esc` |
 
-**Group shots** (filter bar) boxes together consecutive shots taken at most the chosen number of seconds apart
-(default 3 s, up to 3600). Each group shows its shot count, time and span, plus a **Select** button. A typical burst
+**Group shots** in the sidebar groups consecutive shots taken at most the chosen number of seconds apart
+(default 3 s, up to 3600). Each group has a shot count and a **Select burst** button. A typical burst
 cleanup: tick **Only groups**, open the shots in the viewer to compare, select the ones you don't want, **Move to trash**.
 
 **Compare** shows X (fixed, left) and Y (right) at the same zoom and on the same spot, so you can check sharpness
 or expressions across a burst. The ribbon offers **Same burst** (shots within the *Group shots* gap of X),
-**Selected photos**, or **All shown photos**; it starts with the selection if you selected several, otherwise
-with X's burst. Typical use: select the keeper as X, step through Y with `→`, press `Space` on the rejects,
+**Selected photos**, or **All shown photos**. By default the ribbon shows all visible photos, with a second
+selected photo used as Y when available. Typical use: select the keeper as X, step through Y with `→`, press `Space` on the rejects,
 then close and **Move to trash**.
 
-**Remove from album** (shown only when an album is open) takes the items out of that album; they stay in your library.
+**Remove from album** (enabled when an album is open and photos are selected) takes the items out of that album; they stay in your library.
 **Move to trash** deletes the items from your library and from every album they are in. You can restore them from
 Google Photos' Trash for 60 days. Both actions ask for confirmation first.
 

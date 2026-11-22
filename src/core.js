@@ -1,336 +1,3 @@
-// Shared app code. Built into the userscript and the Chrome extension by
-// scripts/build.mjs, wrapped in an IIFE after a platform adapter that defines
-// `platform` (download, onOpenRequest).
-
-const W = window;
-const HOUR = 3600 * 1000;
-const TZ_MARGIN = 14 * HOUR; // max timezone offset; used to widen UTC search bounds
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-// ---------------------------------------------------------------------------
-// RPC layer
-// ---------------------------------------------------------------------------
-
-// The script runs in Tampermonkey's isolated sandbox (page-context injection is
-// blocked by the page's Trusted Types policy), so window.WIZ_global_data is not
-// visible. Read the same values from the inline <script> that defines it.
-function readWizFromScripts() {
-  const keys = ['SNlM0e', 'FdrFJe', 'cfb2h', 'eptZe', 'Dbw5Ud'];
-  const g = {};
-  for (const s of document.querySelectorAll('script:not([src])')) {
-    const text = s.textContent;
-    if (!text.includes('WIZ_global_data')) continue;
-    for (const k of keys) {
-      if (g[k]) continue;
-      const m = new RegExp(`"${k}":"((?:[^"\\\\]|\\\\.)*)"`).exec(text);
-      if (m) g[k] = JSON.parse(`"${m[1]}"`); // unescapes \u003d, \/ etc.
-    }
-  }
-  return g;
-}
-
-let wizCache = null;
-function pageData() {
-  const live = W.WIZ_global_data;
-  const g = live && live.SNlM0e ? live : (wizCache ||= readWizFromScripts());
-  if (!g.SNlM0e) {
-    wizCache = null;
-    throw new Error('Google Photos page data not found. Reload photos.google.com and make sure you are signed in.');
-  }
-  return { at: g.SNlM0e, fsid: g.FdrFJe, bl: g.cfb2h, path: g.eptZe || '/_/PhotosUi/', rapt: g.Dbw5Ud };
-}
-
-async function rpc(rpcid, data) {
-  const g = pageData();
-  const freq = JSON.stringify([[[rpcid, JSON.stringify(data), null, 'generic']]]);
-  const body = `f.req=${encodeURIComponent(freq)}&at=${encodeURIComponent(g.at)}&`;
-  const params = new URLSearchParams({
-    rpcids: rpcid,
-    'source-path': location.pathname,
-    'f.sid': g.fsid,
-    bl: g.bl,
-    pageId: 'none',
-    rt: 'c',
-  });
-  if (typeof g.rapt === 'string') params.set('rapt', g.rapt);
-  const url = `https://photos.google.com${g.path}data/batchexecute?${params}`;
-
-  let lastErr;
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    try {
-      const res = await fetch(url, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body,
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      const line = text.split('\n').find((l) => l.includes('wrb.fr'));
-      if (!line) throw new Error('unexpected response format');
-      const envelope = JSON.parse(line);
-      if (envelope?.[0]?.[2] == null) throw new Error('empty payload');
-      return JSON.parse(envelope[0][2]);
-    } catch (e) {
-      lastErr = e;
-      if (attempt < 3) await sleep(1500 * attempt);
-    }
-  }
-  throw new Error(`${rpcid} failed: ${lastErr.message}`);
-}
-
-function parseItem(d) {
-  const last = d[d.length - 1];
-  const ext = last && typeof last === 'object' && !Array.isArray(last) ? last : {};
-  return {
-    mediaKey: d[0],
-    thumb: d[1]?.[0],
-    width: d[1]?.[1] || 0,
-    height: d[1]?.[2] || 0,
-    timestamp: d[2], // UTC ms
-    tz: d[4] || 0, // offset ms
-    dedupKey: d[3],
-    isVideo: !!ext['76647426'],
-    duration: ext['76647426']?.[0] || 0, // ms
-  };
-}
-
-// Timeline ordered by date taken, newest first. source: 1 library, 2 archive, 3 both.
-async function timelinePage(pageId, startTs, source) {
-  const r = await rpc('lcxiM', [pageId, startTs, 500, null, 1, source]);
-  return { items: (r?.[0] || []).map(parseItem), nextPageId: r?.[1] || null };
-}
-
-// fromLocal/toLocal are "wall clock" ms (Date.UTC of the chosen dates), compared
-// against each photo's own local time, which is what Google Photos displays.
-async function loadRange(fromLocal, toLocal, source, signal, onProgress) {
-  const found = new Map();
-  const seen = new Set();
-  let pageId = null;
-  let pages = 0;
-  for (;;) {
-    if (signal.aborted) throw new Error('Cancelled');
-    const page = await timelinePage(pageId, pageId ? null : toLocal + TZ_MARGIN, source);
-    pages++;
-    let pastRange = false;
-    let fresh = 0;
-    for (const it of page.items) {
-      if (!seen.has(it.mediaKey)) {
-        seen.add(it.mediaKey);
-        fresh++;
-      }
-      const local = it.timestamp + it.tz;
-      if (local >= fromLocal && local <= toLocal) found.set(it.mediaKey, it);
-      if (it.timestamp < fromLocal - TZ_MARGIN) pastRange = true;
-    }
-    onProgress(found.size, pages, page.items[page.items.length - 1]);
-    // Stop at the range start, at the end of the timeline, or if paging stops making progress.
-    if (pastRange || !page.nextPageId || page.nextPageId === pageId || fresh === 0) break;
-    pageId = page.nextPageId;
-  }
-  return [...found.values()].sort((a, b) => b.timestamp - a.timestamp);
-}
-
-async function listAlbums() {
-  const albums = [];
-  let pageId = null;
-  do {
-    const r = await rpc('Z5xsfc', [pageId, null, null, null, 1, null, null, 100, [2], 5]);
-    for (const a of r?.[0] || []) {
-      const m = a[a.length - 1]?.['72930366'];
-      albums.push({ mediaKey: a[0], title: m?.[1] || '(untitled)', count: m?.[3] ?? 0, shared: !!m?.[4] });
-    }
-    pageId = r?.[1] || null;
-  } while (pageId);
-  return albums;
-}
-
-// Bulk media info: adds fileName and size (bytes) to each item, 500 per request.
-async function fetchFileInfo(items, signal, onProgress) {
-  const CHUNK = 500;
-  const byKey = new Map(items.map((it) => [it.mediaKey, it]));
-  const filler = [null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, [], null, null, null, null, null, null, null, null, null, null, []];
-  for (let i = 0; i < items.length; i += CHUNK) {
-    if (signal.aborted) throw new Error('Cancelled');
-    const keys = items.slice(i, i + CHUNK).map((it) => [it.mediaKey]);
-    const r = await rpc('EWgK9e', [[[keys], [filler]]]);
-    for (const d of r?.[0]?.[1] || []) {
-      const it = byKey.get(d?.[0]);
-      if (!it) continue;
-      it.fileName = d?.[1]?.[3] || null;
-      it.size = d?.[1]?.[9] || null;
-    }
-    onProgress(Math.min(i + CHUNK, items.length), items.length);
-  }
-}
-
-// Album contents. Item mediaKeys returned here are album-scoped: they are what
-// the remove-from-album RPCs expect.
-async function loadAlbum(album, signal, onProgress) {
-  const items = new Map();
-  let pageId = null;
-  do {
-    if (signal.aborted) throw new Error('Cancelled');
-    const r = await rpc('snAcKc', [album.mediaKey, pageId, null, null]);
-    for (const d of r?.[1] || []) {
-      const it = parseItem(d);
-      items.set(it.mediaKey, it);
-    }
-    const next = r?.[2] || null;
-    pageId = next && next !== pageId ? next : null;
-    onProgress(items.size);
-  } while (pageId);
-  return [...items.values()].sort((a, b) => b.timestamp - a.timestamp);
-}
-
-// Resolves with the items that were actually removed.
-async function removeFromAlbum(items, album, onProgress, signal) {
-  if (album.shared) {
-    // LjmOue rejects requests carrying several items (empty payload) but accepts
-    // one item at a time, so send one request per item, a few in parallel.
-    const filler = [[null, null, null, [null, [], []], null, null, null, null, null, null, null, null, null, []]];
-    const removed = [];
-    const errors = await runPool(items, 3, async (it) => {
-      await rpc('LjmOue', [[album.mediaKey], [[it.mediaKey]], filler]);
-      removed.push(it);
-      onProgress(removed.length, items.length);
-    }, signal);
-    if (errors.length) console.warn('[gprt] shared album removal errors', errors);
-    return removed;
-  }
-  const CHUNK = 250;
-  for (let i = 0; i < items.length; i += CHUNK) {
-    if (signal.aborted) return items.slice(0, i);
-    await rpc('ycV3Nd', [items.slice(i, i + CHUNK).map((it) => it.mediaKey)]);
-    onProgress(Math.min(i + CHUNK, items.length), items.length);
-  }
-  return items;
-}
-
-// Moves items to Google Photos' trash (restorable there for 60 days).
-async function moveToTrash(items, onProgress) {
-  const CHUNK = 250;
-  for (let i = 0; i < items.length; i += CHUNK) {
-    const keys = items.slice(i, i + CHUNK).map((it) => it.dedupKey).filter(Boolean);
-    if (keys.length) await rpc('XwAOJf', [null, 1, keys, 3]);
-    onProgress(Math.min(i + CHUNK, items.length), items.length);
-  }
-}
-
-async function createAlbum(name) {
-  const r = await rpc('OXvT9d', [name, null, 2]);
-  const key = r?.[0]?.[0];
-  if (!key) throw new Error('Album creation returned no id');
-  return key;
-}
-
-async function addToAlbum(mediaKeys, album, onProgress) {
-  const CHUNK = 250;
-  for (let i = 0; i < mediaKeys.length; i += CHUNK) {
-    const chunk = mediaKeys.slice(i, i + CHUNK);
-    if (album.shared) {
-      await rpc('laUYf', [album.mediaKey, [2, null, chunk.map((k) => [[k]]), null, null, null, [1]]]);
-    } else {
-      await rpc('E1Cajb', [chunk, album.mediaKey]);
-    }
-    onProgress(Math.min(i + CHUNK, mediaKeys.length), mediaKeys.length);
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Image URLs and downloads
-// ---------------------------------------------------------------------------
-
-const aspect = (it) => (it.width && it.height ? it.width / it.height : 1);
-
-// URL whose shorter side is at least `px` (so it can fill a square tile).
-function coverUrl(it, px) {
-  const ar = aspect(it);
-  const w = ar >= 1 ? Math.round(px * ar) : px;
-  const h = ar >= 1 ? px : Math.round(px / ar);
-  return `${it.thumb}=w${w}-h${h}-k-no`;
-}
-
-// URL that fits within width `px`, keeping aspect ratio, capped at the original size.
-function widthUrl(it, px) {
-  const w = it.width ? Math.min(px, it.width) : px;
-  const h = Math.ceil(w / aspect(it));
-  return `${it.thumb}=w${w}-h${h}-k-no`;
-}
-
-const originalUrl = (it) => `${it.thumb}=${it.isVideo ? 'dv' : 'd'}`;
-
-function fallbackName(it, contentType) {
-  const extByType = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/heic': 'heic', 'image/webp': 'webp', 'image/gif': 'gif', 'video/mp4': 'mp4', 'video/quicktime': 'mov' };
-  const ext = extByType[contentType.split(';')[0]] || (it.isVideo ? 'mp4' : 'jpg');
-  const d = new Date(it.timestamp + it.tz).toISOString().replace(/[-:]/g, '').replace('T', '_').slice(0, 15);
-  return `${d}_${it.mediaKey.slice(-8)}.${ext}`;
-}
-
-// Platform adapters (userscript / extension) implement the actual transfer.
-const downloadItem = (it) => platform.download({
-  url: originalUrl(it),
-  fileName: it.fileName,
-  fallbackName: (contentType) => fallbackName(it, contentType),
-});
-
-async function runPool(items, concurrency, worker, signal) {
-  let next = 0;
-  const errors = [];
-  const lanes = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (next < items.length && !signal.aborted) {
-      const i = next++;
-      try {
-        await worker(items[i], i);
-      } catch (e) {
-        errors.push({ item: items[i], error: e });
-      }
-    }
-  });
-  await Promise.all(lanes);
-  return errors;
-}
-
-// ---------------------------------------------------------------------------
-// DOM helpers (no innerHTML: photos.google.com enforces Trusted Types)
-// ---------------------------------------------------------------------------
-
-function h(tag, props, ...kids) {
-  const el = document.createElement(tag);
-  for (const [k, v] of Object.entries(props || {})) {
-    if (v == null || v === false) continue;
-    if (k === 'class') el.className = v;
-    else if (k === 'style') Object.assign(el.style, v);
-    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
-    else if (k === 'value') el.value = v;
-    else if (k === 'checked') el.checked = !!v;
-    else el.setAttribute(k, v === true ? '' : v);
-  }
-  for (const c of kids.flat()) if (c != null && c !== false) el.append(c instanceof Node ? c : String(c));
-  return el;
-}
-
-const pad = (n) => String(n).padStart(2, '0');
-const localDate = (it) => new Date(it.timestamp + it.tz); // read with getUTC* for the photo's local time
-const dayKey = (it) => {
-  const d = localDate(it);
-  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`;
-};
-const fmtDay = (key) =>
-  new Date(`${key}T00:00:00Z`).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
-const fmtDateTime = (it) =>
-  localDate(it).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' });
-const fmtDuration = (ms) => {
-  const s = Math.round(ms / 1000);
-  return `${Math.floor(s / 60)}:${pad(s % 60)}`;
-};
-const isoDay = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-
-// ---------------------------------------------------------------------------
-// Styles
-// ---------------------------------------------------------------------------
-
-
 // ---------------------------------------------------------------------------
 // App state and UI
 // ---------------------------------------------------------------------------
@@ -346,13 +13,16 @@ const S = {
   selected: new Set(), // mediaKeys
   lastClicked: null, // index for shift-click ranges
   size: 200,
-  crop: true,
+  indices: new Map(),
+  extensions: new Map(),
+  readingInfo: false,
   albums: null,
   task: null, // AbortController of the running task
   viewer: null,
 };
 
 let root, grid, statusEl, selCountEl, btnAlbum, btnDownload, btnCancel, btnLoad, inFrom, inTo, inSource, filterBar, extChips;
+let sourceTitle, itemCount, gridSurface;
 let btnOpenAlbum, btnRemove, btnTrash, btnCompare, groupCountEl;
 
 const UNKNOWN_EXT = '(unknown)';
@@ -383,22 +53,21 @@ function applyFilters() {
     S.items = groupShots(S.items, S.groupGapSec * 1000).filter((g) => g.length > 1).flat();
   }
   // Keep only selections that are still visible, so album/download actions match what you see.
-  const visible = new Set(S.items.map((it) => it.mediaKey));
-  for (const k of [...S.selected]) if (!visible.has(k)) S.selected.delete(k);
+  S.indices = new Map(S.items.map((it, index) => [it.mediaKey, index]));
+  for (const key of S.selected) if (!S.indices.has(key)) S.selected.delete(key);
   S.lastClicked = null;
   renderGrid();
-  if (S.all.length) setStatus(`Showing ${S.items.length} of ${S.all.length} items ${S.source?.label || ''}.`);
+  itemCount.textContent = `${S.items.length} of ${S.all.length} items`;
 }
 
 function buildExtChips() {
-  const counts = new Map();
-  for (const it of S.all) counts.set(extOf(it), (counts.get(extOf(it)) || 0) + 1);
+  const counts = S.extensions;
   const exts = [...counts.keys()].sort((a, b) => counts.get(b) - counts.get(a));
   S.hiddenExts = new Set([...S.hiddenExts].filter((e) => counts.has(e)));
   extChips.replaceChildren(...exts.map((ext) =>
     h('label', { class: 'gprt-chip' },
       h('input', {
-        type: 'checkbox',
+        type: 'checkbox', disabled: S.readingInfo,
         checked: !S.hiddenExts.has(ext),
         onchange: (e) => { if (e.target.checked) S.hiddenExts.delete(ext); else S.hiddenExts.add(ext); applyFilters(); },
       }),
@@ -407,10 +76,13 @@ function buildExtChips() {
   filterBar.style.display = S.all.length ? '' : 'none';
 }
 
-function setAllExts(on) {
-  S.hiddenExts = on ? new Set() : new Set(S.all.map(extOf));
+function countExtensions() {
+  S.extensions.clear();
+  for (const item of S.all) {
+    const ext = extOf(item);
+    S.extensions.set(ext, (S.extensions.get(ext) || 0) + 1);
+  }
   buildExtChips();
-  applyFilters();
 }
 
 function setStatus(msg, isError = false) {
@@ -438,7 +110,7 @@ function buildApp() {
   btnLoad = h('button', { class: 'gprt-primary', onclick: onLoad }, 'Load');
   btnCancel = h('button', { style: { display: 'none' }, onclick: () => S.task?.abort() }, 'Cancel');
   btnOpenAlbum = h('button', { onclick: onOpenAlbum, title: 'Load the contents of an album instead of a date range' }, 'Open album…');
-  btnRemove = h('button', { onclick: removeSelectedFromAlbum, style: { display: 'none' } }, 'Remove from album');
+  btnRemove = h('button', { onclick: removeSelectedFromAlbum }, 'Remove from album');
   btnTrash = h('button', { onclick: trashSelected, style: { color: '#ff8a80' } }, 'Move to trash');
   btnCompare = h('button', {
     title: 'Compare the first selected photo with the others side by side',
@@ -450,13 +122,12 @@ function buildApp() {
     type: 'range', min: '64', max: '600', step: '8', value: String(S.size),
     oninput: (e) => { setTileSize(+e.target.value); sizeLabel.textContent = `${S.size}px`; },
   });
-  const cropBox = h('input', { type: 'checkbox', checked: S.crop, onchange: (e) => setCrop(e.target.checked) });
 
   selCountEl = h('span', {}, '');
   btnAlbum = h('button', { onclick: openAlbumDialog }, 'Add to album…');
   btnDownload = h('button', { onclick: downloadSelected }, 'Download');
 
-  statusEl = h('div', { class: 'gprt-status' }, 'Pick a date range and press Load.');
+  statusEl = h('div', { class: 'gprt-status' }, 'Open an album or load a date range.');
   extChips = h('div', { class: 'gprt-group', style: { flexWrap: 'wrap' } });
   groupCountEl = h('small', { style: { color: '#999' } });
   const gapInput = h('input', {
@@ -486,9 +157,7 @@ function buildApp() {
         h('input', { type: 'checkbox', onchange: (e) => { S.grouping = e.target.checked; groupOpts.style.display = S.grouping ? '' : 'none'; applyFilters(); } }),
         'Group shots'),
       groupOpts),
-    h('div', { class: 'gprt-group' }, 'Extensions', extChips,
-      h('button', { onclick: () => setAllExts(true) }, 'All'),
-      h('button', { onclick: () => setAllExts(false) }, 'None')));
+    h('div', { class: 'gprt-group' }, 'Extensions', extChips));
   grid = h('div', { class: 'gprt-grid' }, h('div', { class: 'gprt-empty' }, 'No photos loaded.'));
   grid.addEventListener('wheel', (e) => {
     if (!e.ctrlKey && !e.metaKey) return; // ctrl/cmd + wheel resizes tiles
@@ -499,35 +168,63 @@ function buildApp() {
     sizeLabel.textContent = `${S.size}px`;
   }, { passive: false });
 
-  root = h('div', { class: `gprt-root${S.crop ? '' : ' gprt-fit'}` },
-    h('div', { class: 'gprt-bar' },
-      h('div', { class: 'gprt-group' }, 'From', inFrom, 'to', inTo, inSource, btnLoad, 'or', btnOpenAlbum, btnCancel),
-      h('div', { class: 'gprt-group' }, 'Size', sizeSlider, sizeLabel,
-        h('label', { class: 'gprt-group' }, cropBox, 'Square')),
-      h('div', { class: 'gprt-group' },
-        h('button', { onclick: () => selectAll(true) }, 'Select all'),
-        h('button', { onclick: () => selectAll(false) }, 'Clear'),
-        selCountEl, btnCompare, btnAlbum, btnDownload, btnRemove, btnTrash),
-      h('div', { class: 'gprt-spacer' }),
-      h('button', { onclick: closeApp, title: 'Close (Esc)' }, '✕')),
-    filterBar,
-    statusEl,
-    grid);
-  root.style.setProperty('--sz', `${S.size}px`);
+  const dateFields = h('div', { class: 'gprt-source-fields', hidden: true },
+    h('label', {}, 'From', inFrom), h('label', {}, 'To', inTo), inSource, btnLoad);
+  const albumFields = h('div', { class: 'gprt-source-fields' }, btnOpenAlbum);
+  const albumTab = h('button', { onclick: () => switchSource(true) }, 'Album');
+  const dateTab = h('button', { onclick: () => switchSource(false) }, 'Date range');
+  function switchSource(album) {
+    albumFields.hidden = !album;
+    dateFields.hidden = album;
+    albumTab.setAttribute('aria-pressed', album);
+    dateTab.setAttribute('aria-pressed', !album);
+  }
+  switchSource(true);
+
+  sourceTitle = h('h1', {}, 'Photos');
+  itemCount = h('div', { class: 'gprt-muted' }, '0 items');
+  btnCompare.classList.add('gprt-primary');
+  root = h('div', { class: 'gprt-root' },
+    h('header', { class: 'gprt-top' },
+      h('strong', {}, h('span', {}, '▣'), 'Light Table'),
+      h('button', { onclick: closeApp, title: 'Close (Esc)', 'aria-label': 'Close Light Table' }, '✕')),
+    h('div', { class: 'gprt-shell' },
+      h('aside', { class: 'gprt-sidebar', 'aria-label': 'Browse controls' },
+        h('h2', {}, 'Source'), h('div', { class: 'gprt-tabs' }, albumTab, dateTab),
+        albumFields, dateFields, btnCancel,
+        h('h2', {}, 'Filters'), filterBar),
+      h('main', { class: 'gprt-gallery' },
+        h('div', { class: 'gprt-gallery-head' },
+          h('div', {}, sourceTitle, itemCount),
+          h('label', { class: 'gprt-group' }, 'Tile size', sizeSlider, sizeLabel)),
+        statusEl, grid,
+        h('footer', { class: 'gprt-actions' }, selCountEl,
+          h('button', { onclick: () => selectAll(true) }, 'Select all'),
+          h('button', { onclick: () => selectAll(false) }, 'Clear'),
+          h('div', { class: 'gprt-spacer' }), btnCompare, btnAlbum, btnDownload, btnRemove, btnTrash))));
+  statusEl.setAttribute('role', 'status');
+  grid.addEventListener('scroll', scheduleGridWindow, { passive: true });
   updateSelectionUi();
 }
 
 function openApp() {
   if (!root) buildApp();
-  if (!root.isConnected) document.body.append(root);
-  window.addEventListener('keydown', onKey, true);
+  if (!root.isConnected) {
+    document.body.append(root);
+    gridObserver.observe(grid);
+    renderGrid();
+  }
+  root.tabIndex = -1;
+  root.focus();
+  root.addEventListener('keydown', onKey, true);
 }
 
 function closeApp() {
   if (S.compare) closeCompare();
   if (S.viewer) closeViewer();
+  gridObserver.disconnect();
   root?.remove();
-  window.removeEventListener('keydown', onKey, true);
+  root?.removeEventListener('keydown', onKey, true);
 }
 
 // ---- Loading ----
@@ -555,30 +252,46 @@ async function onOpenAlbum() {
 }
 
 async function loadInto(source, fetchItems) {
+  if (S.task) return;
   const ctrl = new AbortController();
   setBusy(ctrl);
   setStatus('Loading…');
   try {
     const items = await fetchItems(ctrl.signal);
+    if (ctrl.signal.aborted) throw new Error('Cancelled');
+    closeCompare();
+    closeViewer();
     S.source = source;
+    sourceTitle.textContent = source.album?.title || 'Date range';
     S.all = items;
     S.selected.clear();
-    let infoError = null;
-    if (items.length) {
-      try {
-        await fetchFileInfo(items, ctrl.signal, (done, total) => setStatus(`Reading file names… ${done}/${total}`));
-      } catch (e) {
-        if (ctrl.signal.aborted) throw e;
-        infoError = e; // grid still works; extension filter shows "(unknown)"
-        console.warn('[gprt] file info failed', e);
-      }
-    }
-    buildExtChips();
+    S.hiddenExts.clear();
+    S.readingInfo = items.length > 0;
+    countExtensions();
+    grid.scrollTop = 0;
     applyFilters();
-    if (infoError) setStatus(`${items.length} items loaded, but file names could not be read (${infoError.message}). Extension filter unavailable.`, true);
+    if (items.length) {
+      // Let the contact sheet paint before issuing the first metadata request.
+      await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 0)));
+      await fetchFileInfo(items, ctrl.signal, (done, total, updated) => {
+        for (const item of updated) {
+          updateTileTitle(item);
+          const ext = extOf(item);
+          if (ext === UNKNOWN_EXT) continue;
+          S.extensions.set(UNKNOWN_EXT, S.extensions.get(UNKNOWN_EXT) - 1);
+          S.extensions.set(ext, (S.extensions.get(ext) || 0) + 1);
+        }
+        if (!S.extensions.get(UNKNOWN_EXT)) S.extensions.delete(UNKNOWN_EXT);
+        buildExtChips();
+        setStatus(`Reading file names… ${done}/${total}`);
+      });
+    }
+    setStatus('');
   } catch (e) {
     setStatus(e.message, true);
   } finally {
+    S.readingInfo = false;
+    buildExtChips();
     setBusy(null);
   }
 }
@@ -590,60 +303,162 @@ function thumbBucket() {
   return [128, 192, 256, 384, 512, 768, 1024, 1536].find((b) => b >= need) || 1536;
 }
 
+const GRID_GAP = 4;
+const gridObserver = new ResizeObserver(() => scheduleGridWindow());
+const gridRows = [];
+const mountedRows = new Map();
+const mountedTiles = new Map();
+let gridSections = [];
+let gridFrame = 0;
+let gridWidth = 0;
+let tileEdge = 0;
+let layoutSize = 0;
+
 function renderGrid() {
-  grid.replaceChildren();
-  if (!S.items.length) {
-    grid.append(h('div', { class: 'gprt-empty' }, S.all.length ? 'No items match the current filters.' : S.source?.type === 'album' ? 'This album is empty.' : 'No photos in this range.'));
-    return;
-  }
-  const bucket = thumbBucket();
-  const idxOf = new Map(S.items.map((it, i) => [it.mediaKey, i]));
-  const days = new Map(); // dayKey -> [{ it, idx }], in display order
-  S.items.forEach((it, idx) => {
-    const key = dayKey(it);
+  gridSections = [];
+  const days = new Map();
+  for (const item of S.items) {
+    const key = dayKey(item);
     if (!days.has(key)) days.set(key, []);
-    days.get(key).push({ it, idx });
-  });
-  for (const [key, entries] of days) {
-    const dayItems = entries.map((e) => e.it);
-    grid.append(h('div', { class: 'gprt-day' },
-      h('div', { class: 'gprt-dayhead' }, fmtDay(key), h('small', {}, `${entries.length}`),
-        h('button', { onclick: () => toggleGroup(dayItems) }, 'Select day')),
-      h('div', { class: 'gprt-tiles' }, S.grouping
-        ? groupShots(dayItems, S.groupGapSec * 1000).map((g) => (g.length > 1
-          ? makeShotGroup(g, idxOf, bucket)
-          : makeTile(g[0], idxOf.get(g[0].mediaKey), bucket)))
-        : entries.map(({ it, idx }) => makeTile(it, idx, bucket)))));
+    days.get(key).push(item);
   }
-  if (S.grouping) {
-    const n = groupShots(S.items, S.groupGapSec * 1000).filter((g) => g.length > 1).length;
-    groupCountEl.textContent = `${n} group${n === 1 ? '' : 's'}`;
-  } else {
-    groupCountEl.textContent = '';
+  let bursts = 0;
+  for (const [day, items] of days) {
+    gridSections.push({ label: fmtDay(day), items, day: true });
+    let singles = [];
+    if (S.grouping) {
+      for (const group of groupShots(items, S.groupGapSec * 1000)) {
+        if (group.length === 1) {
+          singles.push(group[0]);
+          continue;
+        }
+        if (singles.length) gridSections.push({ photos: singles });
+        singles = [];
+        bursts++;
+        gridSections.push({ label: `${group.length} shots`, items: group }, { photos: group });
+      }
+    } else {
+      singles = items;
+    }
+    if (singles.length) gridSections.push({ photos: singles });
   }
+  groupCountEl.textContent = S.grouping ? `${bursts} group${bursts === 1 ? '' : 's'}` : '';
+  mountedRows.clear();
+  mountedTiles.clear();
+  gridRows.length = 0;
+  gridSurface = h('div', { class: 'gprt-grid-surface' });
+  grid.replaceChildren(gridSections.length ? gridSurface : h('div', { class: 'gprt-empty' },
+    S.all.length ? 'No items match the current filters.' : 'No photos loaded.'));
+  gridWidth = 0;
+  updateGridWindow();
   updateSelectionUi();
 }
 
-function makeShotGroup(group, idxOf, bucket) {
-  const span = (group[0].timestamp - group[group.length - 1].timestamp) / 1000;
-  const spanText = span < 60 ? `${span.toFixed(span < 10 ? 1 : 0)}s` : `${Math.round(span / 60)} min`;
-  const time = localDate(group[group.length - 1]).toLocaleTimeString(undefined, { timeStyle: 'medium', timeZone: 'UTC' });
-  return h('div', { class: 'gprt-shotgroup' },
-    h('div', { class: 'gprt-shotgroup-head' },
-      `${group.length} shots · ${time} · ${spanText}`,
-      h('button', { onclick: () => toggleGroup(group), title: 'Select or unselect every shot in this group' }, 'Select')),
-    h('div', { class: 'gprt-tiles' }, group.map((it) => makeTile(it, idxOf.get(it.mediaKey), bucket))));
+function scheduleGridWindow() {
+  if (!gridFrame) gridFrame = requestAnimationFrame(() => {
+    gridFrame = 0;
+    updateGridWindow();
+  });
 }
+
+function updateGridWindow() {
+  if (!gridSections.length || !gridSurface.clientWidth || !grid.clientHeight) return;
+  const width = gridSurface.clientWidth;
+  if (width !== gridWidth || layoutSize !== S.size) {
+    gridWidth = width;
+    layoutSize = S.size;
+    const columns = Math.max(1, Math.floor((width + GRID_GAP) / (S.size + GRID_GAP)));
+    tileEdge = Math.min(S.size, width);
+    gridRows.length = 0;
+    let top = 0;
+    const pushRow = (height, row) => {
+      gridRows.push({ ...row, top, height });
+      top += height + GRID_GAP;
+    };
+    for (const section of gridSections) {
+      if (section.photos) {
+        for (let start = 0; start < section.photos.length; start += columns) {
+          pushRow(tileEdge, { photos: section.photos, start, end: Math.min(start + columns, section.photos.length) });
+        }
+      } else {
+        pushRow(section.day ? 44 : 34, section);
+      }
+    }
+    mountedRows.clear();
+    mountedTiles.clear();
+    gridSurface.replaceChildren();
+    gridSurface.style.height = `${top}px`;
+  }
+
+  const overscan = Math.max(400, tileEdge * 2);
+  const start = grid.scrollTop - overscan;
+  const end = grid.scrollTop + grid.clientHeight + overscan;
+  let low = 0;
+  let high = gridRows.length;
+  while (low < high) {
+    const mid = (low + high) >>> 1;
+    const row = gridRows[mid];
+    if (row.top + row.height < start) low = mid + 1;
+    else high = mid;
+  }
+  let last = low;
+  while (last < gridRows.length && gridRows[last].top < end) last++;
+  for (const [index, element] of mountedRows) {
+    if (index >= low && index < last) continue;
+    const row = gridRows[index];
+    if (row.photos) {
+      for (let i = row.start; i < row.end; i++) mountedTiles.delete(row.photos[i].mediaKey);
+    }
+    mountedRows.delete(index);
+    if (element.contains(document.activeElement)) root.focus({ preventScroll: true });
+    element.remove();
+  }
+  const bucket = thumbBucket();
+  let next = null;
+  for (let index = last - 1; index >= low; index--) {
+    let element = mountedRows.get(index);
+    if (!element) {
+      const row = gridRows[index];
+      element = h('div', { class: `gprt-window-row ${row.photos ? 'gprt-photo-row' : 'gprt-row-label'}`,
+        style: { top: `${row.top}px`, height: `${row.height}px` } });
+      if (row.photos) {
+        for (let i = row.start; i < row.end; i++) {
+          const item = row.photos[i];
+          const tile = makeTile(item, S.indices.get(item.mediaKey), bucket);
+          tile.style.width = `${tileEdge}px`;
+          mountedTiles.set(item.mediaKey, tile);
+          element.append(tile);
+        }
+      } else {
+        element.append(h('strong', {}, row.label));
+        if (row.day) element.append(h('small', {}, `${row.items.length} items`));
+        element.append(h('button', { onclick: () => toggleGroup(row.items) }, row.day ? 'Select day' : 'Select burst'));
+      }
+      gridSurface.insertBefore(element, next);
+      mountedRows.set(index, element);
+    }
+    next = element;
+  }
+}
+
+function updateTileTitle(item) {
+  const tile = mountedTiles.get(item.mediaKey);
+  if (tile) {
+    tile.title = tileTitle(item);
+    tile.setAttribute('aria-label', tile.title);
+  }
+}
+
+const tileTitle = (item) => [item.fileName, fmtDateTime(item)].filter(Boolean).join(' · ');
 
 function makeTile(it, idx, bucket) {
   const img = h('img', { loading: 'lazy', decoding: 'async', alt: '', src: coverUrl(it, bucket) });
-  img.dataset.bucket = String(bucket);
-  const tile = h('div', { class: 'gprt-tile', 'data-idx': String(idx), title: [it.fileName, fmtDateTime(it)].filter(Boolean).join(' · ') },
+  const title = tileTitle(it);
+  const tile = h('button', { type: 'button', class: 'gprt-tile', 'aria-label': title, title },
     img,
-    h('div', { class: 'gprt-check', title: 'Select' }),
-    it.isVideo ? h('div', { class: 'gprt-badge' }, `▶ ${fmtDuration(it.duration)}`) : null);
-  tile.style.setProperty('--ar', aspect(it).toFixed(4));
-  if (S.selected.has(it.mediaKey)) tile.classList.add('gprt-sel');
+    h('span', { class: 'gprt-check', title: 'Select', 'aria-hidden': 'true' }),
+    it.isVideo ? h('span', { class: 'gprt-badge' }, `▶ ${fmtDuration(it.duration)}`) : null);
+  syncTile(tile, it.mediaKey);
   tile.addEventListener('click', (e) => onTileClick(e, idx));
   return tile;
 }
@@ -667,7 +482,7 @@ function toggleItem(idx) {
   if (S.selected.has(key)) S.selected.delete(key);
   else S.selected.add(key);
   S.lastClicked = idx;
-  grid.querySelector(`[data-idx="${idx}"]`)?.classList.toggle('gprt-sel', S.selected.has(key));
+  syncTile(mountedTiles.get(key), key);
   updateSelectionUi();
 }
 
@@ -686,10 +501,15 @@ function selectAll(on) {
   refreshTiles();
 }
 
+function syncTile(tile, key) {
+  if (!tile) return;
+  const selected = S.selected.has(key);
+  tile.classList.toggle('gprt-sel', selected);
+  tile.setAttribute('aria-pressed', selected);
+}
+
 function refreshTiles() {
-  for (const tile of grid.querySelectorAll('.gprt-tile')) {
-    tile.classList.toggle('gprt-sel', S.selected.has(S.items[+tile.dataset.idx].mediaKey));
-  }
+  for (const [key, tile] of mountedTiles) syncTile(tile, key);
   updateSelectionUi();
 }
 
@@ -700,28 +520,16 @@ function updateSelectionUi() {
   btnAlbum.disabled = n === 0 || !!S.task;
   btnDownload.disabled = n === 0 || !!S.task;
   btnTrash.disabled = n === 0 || !!S.task;
-  btnCompare.disabled = n === 0 || !!S.task;
-  btnRemove.disabled = n === 0 || !!S.task;
-  btnRemove.style.display = S.source?.type === 'album' ? '' : 'none';
+  btnCompare.disabled = n === 0;
+  btnRemove.disabled = n === 0 || !!S.task || S.source?.type !== 'album';
   btnOpenAlbum.disabled = !!S.task;
   root.classList.toggle('gprt-has-sel', n > 0);
 }
 
 function setTileSize(px) {
+  if (S.size === px) return;
   S.size = px;
-  root.style.setProperty('--sz', `${px}px`);
-  const bucket = thumbBucket();
-  for (const img of grid.querySelectorAll('.gprt-tile img')) {
-    if (+img.dataset.bucket >= bucket) continue; // only upgrade, never downgrade
-    const it = S.items[+img.parentElement.dataset.idx];
-    img.src = coverUrl(it, bucket);
-    img.dataset.bucket = String(bucket);
-  }
-}
-
-function setCrop(on) {
-  S.crop = on;
-  root.classList.toggle('gprt-fit', !on);
+  scheduleGridWindow();
 }
 
 // ---- Albums ----
@@ -846,7 +654,7 @@ function dropFromView(items) {
   const gone = new Set(items.map((it) => it.mediaKey));
   S.all = S.all.filter((it) => !gone.has(it.mediaKey));
   for (const k of gone) S.selected.delete(k);
-  buildExtChips();
+  countExtensions();
   applyFilters();
 }
 
@@ -872,12 +680,38 @@ async function runAction(items, verb, action) {
   }
 }
 
+async function removeAlbumSelection(items, album, progress, signal) {
+  const removed = [];
+  const batchSize = 250;
+  const sourcePath = `/album/${encodeURIComponent(album.mediaKey)}`;
+  try {
+    for (let start = 0; start < items.length && !signal.aborted; start += batchSize) {
+      const batch = items.slice(start, start + batchSize);
+      const result = await rpc('ycV3Nd', [batch.map((item) => item.mediaKey)], {
+        sourcePath, allowEmpty: album.shared,
+      });
+      if (result === undefined) {
+        // Keep the shared-album path available when this RPC returns no payload.
+        const rest = await removeFromAlbum(items.slice(start), album,
+          (count) => progress(start + count, items.length), signal);
+        return removed.concat(rest);
+      }
+      removed.push(...batch);
+      progress(removed.length, items.length);
+    }
+  } catch (error) {
+    if (!removed.length) throw error;
+    console.warn('[gprt] album removal stopped after a completed batch', error);
+  }
+  return removed;
+}
+
 async function removeSelectedFromAlbum() {
   const album = S.source?.album;
   const items = selectedItems();
   if (!album || !items.length) return;
   if (!confirm(`Remove ${items.length} item${items.length === 1 ? '' : 's'} from "${album.title}"?\n\nThe photos stay in your library.`)) return;
-  if (await runAction(items, 'Removing from album', (p, signal) => removeFromAlbum(items, album, p, signal))) {
+  if (await runAction(items, 'Removing from album', (p, signal) => removeAlbumSelection(items, album, p, signal))) {
     setStatus(`Removed ${items.length} items from "${album.title}". ${S.all.length} left.`);
   }
 }
@@ -920,8 +754,15 @@ async function downloadSelected() {
 // Viewer with zoom and pan
 // ---------------------------------------------------------------------------
 
+// A reused img can keep painting its previous resource until the new one loads.
+function replacePhotoImage(previous, url) {
+  const next = h('img', { alt: '', draggable: 'false', src: url });
+  previous.replaceWith(next);
+  return next;
+}
+
 function openViewer(idx) {
-  const img = h('img', { alt: '', draggable: 'false' });
+  let img = h('img', { alt: '', draggable: 'false' });
   const stage = h('div', { class: 'gprt-stage' }, img);
   const zoomLabel = h('span', { class: 'gprt-zoom' }, '');
   const info = h('span', {}, '');
@@ -949,6 +790,8 @@ function openViewer(idx) {
     h('button', { class: 'gprt-nav', style: { left: '8px' }, onclick: () => go(-1) }, '‹'),
     h('button', { class: 'gprt-nav', style: { right: '8px' }, onclick: () => go(1) }, '›'));
   root.append(el);
+  el.tabIndex = -1;
+  el.focus();
 
   const V = { el, idx, z: 1, tx: 0, ty: 0, baseW: 0, baseH: 0, left: 0, top: 0, loadedW: 0, timer: 0, go, zoomBy, fit, actualSize, toggleSel: () => selBtn.click(), refreshSel: () => syncSel() };
   S.viewer = V;
@@ -960,8 +803,8 @@ function openViewer(idx) {
   function show() {
     const it = item();
     V.loadedW = 0;
-    const tile = grid.querySelector(`[data-idx="${V.idx}"] img`);
-    img.src = tile?.currentSrc || coverUrl(it, 256); // instant preview from the grid
+    const tile = mountedTiles.get(it.mediaKey)?.firstElementChild;
+    img = replacePhotoImage(img, tile?.currentSrc || coverUrl(it, 256));
     info.textContent = `${it.fileName ? `${it.fileName} · ` : ''}${fmtDateTime(it)} · ${it.width}×${it.height}${it.isVideo ? ` · video ${fmtDuration(it.duration)} (download to play)` : ''} · ${V.idx + 1}/${S.items.length}`;
     openLink.href = `https://photos.google.com/photo/${it.mediaKey}`;
     syncSel();
@@ -1009,10 +852,10 @@ function openViewer(idx) {
     const step = Math.ceil(need / 256) * 256;
     const target = it.width ? Math.min(step, it.width) : step;
     if (target <= V.loadedW) return;
-    const forIdx = V.idx;
+    const preview = img;
     const hi = new Image();
     hi.onload = () => {
-      if (S.viewer !== V || V.idx !== forIdx) return;
+      if (S.viewer !== V || img !== preview || target <= V.loadedW) return;
       img.src = hi.src;
       V.loadedW = Math.max(V.loadedW, target);
     };
@@ -1108,6 +951,7 @@ function closeViewer() {
   clearTimeout(V.timer);
   V.el.remove();
   S.viewer = null;
+  root.focus();
 }
 
 // ---------------------------------------------------------------------------
@@ -1122,16 +966,11 @@ function compareCandidates(x, mode) {
   return S.items;
 }
 
-function defaultCompareMode(x) {
-  if (S.selected.size >= 2 && compareCandidates(x, 'selected').length >= 2) return 'selected';
-  if (compareCandidates(x, 'group').length >= 2) return 'group';
-  return 'all';
-}
-
 function openCompare(xIdx) {
   const x0 = S.items[xIdx];
   if (!x0) return;
-  const C = { x: x0, y: null, mode: defaultCompareMode(x0), list: [], z: 1, cu: 0.5, cv: 0.5, timer: 0 };
+  const y0 = S.selected.size > 1 ? S.items.find((it) => it !== x0 && S.selected.has(it.mediaKey)) : null;
+  const C = { x: x0, y: y0, mode: 'all', list: [], z: 1, cu: 0.5, cv: 0.5, timer: 0 };
 
   const zoomLabel = h('span', { class: 'gprt-zoom' });
   const modeSel = h('select', { title: 'Which photos the ribbon offers for Y', onchange: (e) => { C.mode = e.target.value; buildRibbon(); } },
@@ -1139,10 +978,16 @@ function openCompare(xIdx) {
     h('option', { value: 'selected' }, 'Selected photos'),
     h('option', { value: 'all' }, 'All shown photos'));
   modeSel.value = C.mode;
-  const ribbon = h('div', { class: 'gprt-ribbon' });
+  const RIBBON_STEP = 80;
+  const ribbonTrack = h('div', { class: 'gprt-ribbon-track' });
+  const ribbon = h('div', { class: 'gprt-ribbon', 'aria-label': 'Compare candidates' }, ribbonTrack);
+  const ribbonNodes = new Map();
+  let ribbonIndex, xPosition, yPosition;
+  ribbon.addEventListener('scroll', renderRibbonWindow, { passive: true });
   const panes = [makePane('X'), makePane('Y')];
   const [PX, PY] = panes;
 
+  const swapButton = h('button', { onclick: swap, title: 'Swap X and Y (S)' }, '⇄ Swap');
   const el = h('div', { class: 'gprt-viewer gprt-compare' },
     h('div', { class: 'gprt-bar' },
       h('strong', {}, 'Compare'),
@@ -1154,11 +999,13 @@ function openCompare(xIdx) {
         h('button', { onclick: () => zoomBy(1.5), title: 'Zoom in (+)' }, '+'),
         h('button', { onclick: () => fit(), title: 'Fit (0)' }, 'Fit'),
         h('button', { onclick: () => actualSize(), title: 'Actual pixels of X (1)' }, '100%')),
-      h('button', { onclick: () => swap(), title: 'Make Y the fixed photo (S)' }, '⇄ Swap'),
+      swapButton,
       h('button', { onclick: closeCompare, title: 'Close (Esc)' }, '✕')),
     h('div', { class: 'gprt-panes' }, PX.el, PY.el),
     ribbon);
   root.append(el);
+  el.tabIndex = -1;
+  el.focus();
   S.compare = Object.assign(C, { el, go, swap, zoomBy, fit, actualSize, onResize, toggleSel: (which) => toggleSel(which === 'x' ? PX : PY) });
   window.addEventListener('resize', onResize);
 
@@ -1180,7 +1027,7 @@ function openCompare(xIdx) {
       zoomAt(P, C.z * Math.exp(-e.deltaY * 0.0015), e.clientX - r.left, e.clientY - r.top);
     }, { passive: false });
     stage.addEventListener('dblclick', (e) => {
-      if (e.target !== img) return;
+      if (e.target !== P.img) return;
       const r = stage.getBoundingClientRect();
       if (C.z > 1.01) fit();
       else zoomAt(P, Math.max(P.it.width ? P.it.width / P.baseW : 2, 2), e.clientX - r.left, e.clientY - r.top);
@@ -1208,15 +1055,14 @@ function openCompare(xIdx) {
     P.it = it;
     P.loadedW = 0;
     if (!it) {
-      P.img.removeAttribute('src');
+      P.img = replacePhotoImage(P.img);
       P.img.style.display = 'none';
       P.info.textContent = 'Pick a photo from the ribbon below';
       P.sel.style.display = 'none';
       return;
     }
-    const tile = grid.querySelector(`[data-idx="${S.items.indexOf(it)}"] img`);
-    P.img.src = tile?.currentSrc || coverUrl(it, 256);
-    P.img.style.display = '';
+    const tile = mountedTiles.get(it.mediaKey)?.firstElementChild;
+    P.img = replacePhotoImage(P.img, tile?.currentSrc || coverUrl(it, 256));
     P.info.textContent = `${it.fileName ? `${it.fileName} · ` : ''}${fmtDateTime(it)} · ${it.width}×${it.height}`;
     P.info.title = P.info.textContent;
     P.sel.style.display = '';
@@ -1231,9 +1077,9 @@ function openCompare(xIdx) {
 
   function toggleSel(P) {
     if (!P.it) return;
-    toggleItem(S.items.indexOf(P.it));
+    toggleItem(S.indices.get(P.it.mediaKey));
     syncSel(P);
-    markRibbon();
+    markThumb(ribbonIndex.get(P.it.mediaKey));
   }
 
   function layout(P) {
@@ -1281,9 +1127,10 @@ function openCompare(xIdx) {
     const step = Math.ceil(need / 256) * 256;
     const target = it.width ? Math.min(step, it.width) : step;
     if (target <= P.loadedW) return;
+    const preview = P.img;
     const hi = new Image();
     hi.onload = () => {
-      if (S.compare !== C || P.it !== it) return;
+      if (S.compare !== C || P.img !== preview || target <= P.loadedW) return;
       P.img.src = hi.src;
       P.loadedW = Math.max(P.loadedW, target);
     };
@@ -1323,62 +1170,106 @@ function openCompare(xIdx) {
 
   function buildRibbon() {
     C.list = compareCandidates(C.x, C.mode);
-    if (!C.list.includes(C.y)) {
-      const i = C.list.indexOf(C.x);
-      C.y = C.list[i + 1] || C.list[i - 1] || null;
-      setPane(PY, C.y);
+    ribbonIndex = C.mode === 'all' ? S.indices : new Map(C.list.map((it, i) => [it.mediaKey, i]));
+    xPosition = ribbonIndex.get(C.x.mediaKey);
+    yPosition = C.y ? ribbonIndex.get(C.y.mediaKey) : undefined;
+    if (yPosition === undefined) {
+      yPosition = xPosition + 1 < C.list.length ? xPosition + 1 : xPosition - 1;
+      C.y = C.list[yPosition] || null;
     }
-    const bucket = 128;
-    ribbon.replaceChildren(...C.list.map((it) => {
-      const t = h('div', { class: 'gprt-rthumb', title: [it.fileName, fmtDateTime(it)].filter(Boolean).join(' · ') },
-        h('img', { loading: 'lazy', decoding: 'async', alt: '', src: coverUrl(it, bucket) }),
+    if (PY.it !== C.y) setPane(PY, C.y);
+    swapButton.disabled = !C.y;
+    ribbonNodes.clear();
+    ribbonTrack.replaceChildren();
+    ribbonTrack.style.width = `${C.list.length * RIBBON_STEP}px`;
+    if (!C.y) ribbonTrack.append(h('span', { class: 'gprt-ribbon-empty' }, 'No other photos in this ribbon.'));
+    revealCandidate(yPosition < 0 ? xPosition : yPosition);
+  }
+
+  function markThumb(position) {
+    const thumb = ribbonNodes.get(position);
+    if (!thumb) return;
+    const item = C.list[position];
+    const role = position === xPosition ? 'X' : position === yPosition ? 'Y' : '';
+    const selected = S.selected.has(item.mediaKey);
+    thumb.classList.toggle('gprt-is-x', role === 'X');
+    thumb.classList.toggle('gprt-is-y', role === 'Y');
+    thumb.classList.toggle('gprt-is-sel', selected);
+    thumb.lastChild.textContent = role;
+    thumb.setAttribute('aria-label', [tileTitle(item), role, selected ? 'Selected' : ''].filter(Boolean).join(' · '));
+    thumb.setAttribute('aria-disabled', role === 'X');
+  }
+
+  function renderRibbonWindow() {
+    const first = Math.max(0, Math.floor(ribbon.scrollLeft / RIBBON_STEP) - 3);
+    const end = Math.min(C.list.length, Math.ceil((ribbon.scrollLeft + ribbon.clientWidth) / RIBBON_STEP) + 3);
+    for (const [position, thumb] of ribbonNodes) {
+      if (position >= first && position < end) continue;
+      ribbonNodes.delete(position);
+      if (thumb === document.activeElement) el.focus({ preventScroll: true });
+      thumb.remove();
+    }
+    let next = null;
+    for (let position = end - 1; position >= first; position--) {
+      let thumb = ribbonNodes.get(position);
+      if (!thumb) {
+        const item = C.list[position];
+        thumb = h('button', {
+          type: 'button', class: 'gprt-rthumb', title: tileTitle(item),
+          style: { left: `${position * RIBBON_STEP}px` },
+          onclick: () => setY(position),
+        }, h('img', { decoding: 'async', alt: '', src: coverUrl(item, 128) }),
         h('span', { class: 'gprt-rtag' }));
-      t.addEventListener('click', () => { if (it !== C.x) setY(it); });
-      t.gprtItem = it;
-      return t;
-    }));
-    if (C.list.length < 2) ribbon.append(h('div', { class: 'gprt-empty', style: { padding: '24px' } }, 'No other photos here. Pick another ribbon source.'));
-    markRibbon();
-  }
-
-  function markRibbon() {
-    for (const t of ribbon.children) {
-      const it = t.gprtItem;
-      if (!it) continue;
-      t.classList.toggle('gprt-is-x', it === C.x);
-      t.classList.toggle('gprt-is-y', it === C.y);
-      t.classList.toggle('gprt-is-sel', S.selected.has(it.mediaKey));
-      t.lastChild.textContent = it === C.x ? 'X' : it === C.y ? 'Y' : '';
-      if (it === C.y) t.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+        ribbonTrack.insertBefore(thumb, next);
+        ribbonNodes.set(position, thumb);
+        markThumb(position);
+      }
+      next = thumb;
     }
   }
 
-  function setY(it) {
-    C.y = it;
-    setPane(PY, it);
-    markRibbon();
+  function revealCandidate(position) {
+    const left = position * RIBBON_STEP;
+    if (left < ribbon.scrollLeft) ribbon.scrollLeft = left;
+    else if (left + RIBBON_STEP > ribbon.scrollLeft + ribbon.clientWidth) {
+      ribbon.scrollLeft = left + RIBBON_STEP - ribbon.clientWidth;
+    }
+    renderRibbonWindow();
   }
 
-  // Move Y through the ribbon, skipping X.
-  function go(d) {
-    const others = C.list.filter((it) => it !== C.x);
-    if (!others.length) return;
-    const i = others.indexOf(C.y);
-    const n = i < 0 ? (d > 0 ? 0 : others.length - 1) : i + d;
-    if (n >= 0 && n < others.length) setY(others[n]);
+  function setY(position) {
+    if (position === xPosition || position === yPosition || !C.list[position]) return;
+    const previous = yPosition;
+    yPosition = position;
+    C.y = C.list[position];
+    setPane(PY, C.y);
+    markThumb(previous);
+    markThumb(yPosition);
+    revealCandidate(yPosition);
+  }
+
+  function go(direction) {
+    if (!C.y) return;
+    let position = yPosition + direction;
+    if (position === xPosition) position += direction;
+    setY(position);
   }
 
   function swap() {
     if (!C.y) return;
     [C.x, C.y] = [C.y, C.x];
+    [xPosition, yPosition] = [yPosition, xPosition];
     setPane(PX, C.x);
     setPane(PY, C.y);
-    buildRibbon();
+    markThumb(xPosition);
+    markThumb(yPosition);
+    revealCandidate(yPosition);
   }
 
   function onResize() {
     panes.forEach((P) => P.it && layout(P));
     apply();
+    renderRibbonWindow();
   }
 }
 
@@ -1389,6 +1280,7 @@ function closeCompare() {
   clearTimeout(C.timer);
   C.el.remove();
   S.compare = null;
+  (S.viewer?.el || root).focus();
   S.viewer?.refreshSel();
 }
 
@@ -1397,7 +1289,7 @@ function closeCompare() {
 // ---------------------------------------------------------------------------
 
 function onKey(e) {
-  if (!root?.isConnected) return;
+  if (!root?.isConnected || (e.target instanceof Element && !root.contains(e.target) && e.target !== document.body)) return;
   e.stopImmediatePropagation();
   const typing = /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
   if (e.key === 'Escape') {
@@ -1413,6 +1305,7 @@ function onKey(e) {
     return;
   }
   if (typing) return;
+  if ((S.compare || S.viewer) && (e.ctrlKey || e.metaKey || e.altKey)) return;
   const C = S.compare;
   if (C) {
     const compareActions = {
@@ -1423,10 +1316,12 @@ function onKey(e) {
       '-': () => C.zoomBy(1 / 1.5),
       0: () => C.fit(),
       1: () => C.actualSize(),
-      s: () => C.swap(),
-      ' ': () => C.toggleSel(e.shiftKey ? 'x' : 'y'),
+      s: () => { if (!e.repeat) C.swap(); },
+      x: () => { if (!e.repeat) C.toggleSel('x'); },
+      y: () => { if (!e.repeat) C.toggleSel('y'); },
+      ' ': () => { if (!e.repeat) C.toggleSel(e.shiftKey ? 'x' : 'y'); },
     };
-    const fn = compareActions[e.key];
+    const fn = compareActions[e.key.toLowerCase()] || compareActions[e.key];
     if (fn) {
       e.preventDefault();
       fn();
@@ -1449,11 +1344,17 @@ function onKey(e) {
     '-': () => V.zoomBy(1 / 1.5),
     0: () => V.fit(),
     1: () => V.actualSize(),
-    ' ': () => V.toggleSel(),
-    x: () => V.toggleSel(),
+    ' ': () => { if (!e.repeat) V.toggleSel(); },
+    x: () => { if (!e.repeat) V.toggleSel(); },
+    Enter: () => {
+      if (e.repeat) return;
+      const item = S.items[V.idx];
+      if (!S.selected.has(item.mediaKey)) V.toggleSel();
+      V.go(1);
+    },
     c: () => openCompare(V.idx),
   };
-  const fn = actions[e.key];
+  const fn = actions[e.key.toLowerCase()] || actions[e.key];
   if (fn) {
     e.preventDefault();
     fn();
